@@ -1,0 +1,58 @@
+# Raspberry patches a player's OWN copy of LINE PLAY. Nothing derived from that APK may ever be committed,
+# and neither may signing keys or an operator's private values. This file is a safety net, not the rule:
+# check `git status` and `git diff --cached --stat` before every commit (.agents/AGENTS.md "Policies").
+
+# Scratch folders: everything derived from an APK (unpacked entries, decoded smali, patched libs, outputs) lives here only.
+/work/
+/build/
+/out/
+/dist/
+/local/
+.opencode/
+
+# LINE PLAY material and analysis databases
+*.apk
+*.xapk
+*.apks
+*.aab
+*.dex
+*.odex
+*.vdex
+*.oat
+*.art
+*.so
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+
+# Keys, certificates and secrets
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+*.secret
+secrets/
+.env
+.env.*
+
+# Operator-local configuration (endpoint, ports, keystore paths)
+raspberry.local.*
+*.local.json
+*.local.toml
+
+# Build outputs and tooling noise
+*.exe
+*.log
+__pycache__/
+.gradle/
+local.properties
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
