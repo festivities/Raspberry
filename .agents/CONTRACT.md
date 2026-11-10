@@ -52,3 +52,4 @@ None yet (S1 not run). Record here: the final host list, the `uuid` pref locatio
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.
+- 2026-11-10 — client/server handoff reviewed in OpenCode; remains draft contract 0, with no shared-rule changes or new client-runtime evidence.

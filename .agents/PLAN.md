@@ -1,35 +1,27 @@
 # Raspberry — Plan (PLAN.md)
 
-Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab facts and client facts: [AGENTS.md](AGENTS.md). The interface with Cherry servers: [CONTRACT.md](CONTRACT.md). Dated evidence and old pairs: [HISTORY.md](HISTORY.md). Written 2026-11-09 ~01:30 by the Cherry session at the user's request; nothing in this repo is built yet.
+Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab facts and client facts: [AGENTS.md](AGENTS.md). The interface with Cherry servers: [CONTRACT.md](CONTRACT.md). Dated evidence and old pairs: [HISTORY.md](HISTORY.md). Originally written 2026-11-09 ~01:30 by the Cherry session at the user's request; implementation has not started.
+
+## Current session corrections (user, 2026-11-10)
+
+- Raspberry runs in **OpenCode**, not Claude Code; historical Claude settings and permission-rule examples below are superseded by AGENTS "Harness" and "Workflow".
+- Autonomous commits and pushes of verified Raspberry work are authorized; do not ask again.
+- Use the APK in **Raspberry's** `.opencode/line-play-artifacts/`, not Cherry's copy. Both archives remain read-only.
+- [V] The only attached device is **Raspberry at `emulator-5554`**, verified with `emu avd name`; Cherry/Jerry are not attached. Reverify identity before every test; Cherry/Jerry remain off-limits regardless of serial.
+- [V] No `cherry` process is running. NDK, cmdline-tools and user-local Raspberry tools are absent at the expected locations. Do not start or reconfigure the Cherry session's services.
+- This session's requested scope is comprehensive context loading and handoff verification, not implementation of the entire roadmap. R0 and S1 remain the next implementation tasks.
 
 ## Handoff protocol (user instruction 2026-10-05, inherited from Cherry)
 
 When the user says they are **moving to another conversation whose agent has no context at all**, the outgoing agent MUST record it here as **HANDOFF INITIATED** with a self-sufficient state snapshot, and the receiving agent MUST append **HANDOFF ACCEPTED** (dated, with any state corrections) once it has loaded context. Older INITIATED/ACCEPTED pairs move to HISTORY.md once accepted. Tell the user before writing a handoff so they can change the effort level.
 
-### HANDOFF INITIATED — 2026-11-09 ~01:30 host time (Cherry session → new Raspberry session with no context)
+### Current handoff — accepted 2026-11-10
 
-You are the receiving agent with **zero context**. The user branched the work into two Claude Code sessions: you (the client patcher) and a **Cherry session** (the server, `D:\Dev\projects\Cherry`). Read, in this order:
+The initial INITIATED/ACCEPTED pair is archived in [HISTORY.md](HISTORY.md). All four Raspberry context files and the requested Cherry context were read. The corrections above and AGENTS describe the current lab, not the old snapshot. Implementation is still pending.
 
-1. All of [AGENTS.md](AGENTS.md), above all "Policies" (public repo hygiene, **never commit anything derived from the APK**, **preserve `D:\Dev\projects\Cherry\.opencode\line-play-artifacts` no matter what**, endpoint-agnostic, minimal modification, Discord-only), "Two sessions", "Tooling rules" (IDA: per-job copies of the PRISTINE database only), "Lab", "Client facts".
-2. [CONTRACT.md](CONTRACT.md), then Cherry's `D:\Dev\projects\Cherry\.agents\CONTRACT.md` (the server half; read-only for you).
-3. This block, "Design" and "Roadmap".
-4. From Cherry's `.agents\AGENTS.md`: "Baseline", "Policies" (skim), "Architecture" (Protocol stacks, Key symbols, Auth), "Known client-inherent limits". **The Read tool refuses large reads: read files in chunks of 70–150 lines; some lines are very long, so Grep them or read them alone.** Do not edit Cherry's `JICAMA.md` or anything else in that repo.
+**Tasks, in order (fix or classify each gap with evidence; tag every claim [S]/[V]/[I]/[?]):**
 
-**Focus (user, 2026-11-09):** "Handoff focuses on remaining open tasks." Everything here is open; there is no half-built feature. The order below is the order to work in. Ask the user only what is listed in task 1.
-
-**State snapshot (2026-11-09 ~01:25, each line observed at that time):**
-- **Repo:** `main` at `001a148` ("Initial commit": the MIT `LICENSE` only) plus the handoff commit that adds `.gitignore` and `.agents/`. Remote `git@github.com:festivities/Raspberry.git` (public, description "Patch LINE PLAY for use with Cherry"). No code exists.
-- **Toolchain:** see AGENTS "Tooling rules". Present: JDK 25, Android SDK build-tools 36.0.0 (aapt2, zipalign, apksigner, d8), platform android-37.0, adb, emulator, Go 1.27.1, mingw gcc. **Missing: Android NDK, cmdline-tools, apktool, smali/baksmali, jadx CLI.**
-- **Devices:** `emulator-5554` = AVD Cherry and `emulator-5556` = AVD Jerry belong to the Cherry session (do not touch). **No AVD for you exists yet.**
-- **Lab Cherry instance** (the Cherry session's): PID 43976, built from `17f305b`, accepts guest logins, reachable from an emulator at `10.0.2.2` on 443/80/10123/10000.
-- **Input APK:** present and verified, SHA-256 `aa6495a0…45d1` (AGENTS "Baseline"). Cherry's pristine IDA database exists (never open it; copy per job).
-- **Decisions already made by the user (2026-11-09):** a separate repo for the patcher (this one); the APK must connect to ANY custom endpoint (build-time parameter, never hard-coded); only Discord sign-in, with no passwords stored anywhere; certificates may be patched if the in-game browser needs it; minimal modification; security is a requirement; "go with what you recommend" for the endpoint mechanism, which is the resolver/connect hook in "Design" (host-string rewriting is the fallback). The production endpoint's values are private to the user and the Cherry session; you never need them (the operator passes them to the patcher).
-
-**Open tasks, in order (fix or classify each gap with evidence; tag every claim [S]/[V]/[I]/[?]):**
-
-1. **Load context, recheck the lab, ask the user (one AskUserQuestion round, recommended option first).** Recheck: `git status`, `adb devices` plus `adb -s <serial> emu avd name` per serial, the lab Cherry's PID/path (`Get-Process cherry`), the toolchain, the APK hash. Append **HANDOFF ACCEPTED** with corrections. Ask exactly these, nothing more:
-   - (a) **Commit policy:** may you commit and push verified work autonomously (as in Cherry, 2026-10-28)? Record the answer in AGENTS "Policies".
-   - (b) **Test device:** please create a third AVD `Raspberry` (Android Studio Device Manager: same image as Jerry, android-37.0 google_apis x86_64, 1080×2424) **or** approve installing `cmdline-tools` so you can create it; and add the tap allow-rule for its serial to the project's `.claude/settings.json` (the agent may not edit Claude settings). Static work (tasks 2–3) does not wait for this.
+1. **Load context and recheck the lab — complete 2026-11-10.** APK hash/size, attached AVD identity, Cherry process absence and expected tool locations verified read-only. Commit/push permission granted; Raspberry AVD exists. See HISTORY for checks not performed. No device test or runtime acceptance was attempted.
    Defaults you may take without asking: install the missing build tools in user space from official release pages with verified checksums; choose a neutral Java package and URL scheme (no LINE names; for example `dev.raspberry`); keep the dev keystore outside the repo (`%LOCALAPPDATA%\Raspberry\keys\`, owner-only).
 2. **R0 — Toolchain.** Install and record versions + SHA-256 in AGENTS: Android NDK (current LTS), `cmdline-tools`, apktool and smali/baksmali (or your chosen smali tooling), jadx CLI (optional). Create the Go module `github.com/festivities/raspberry`, the repo skeleton ("Design" layout), `scripts/check-repo` and a first CI-less gate script. Smoke test: unpack the APK into `work/`, re-zip it unchanged with a Go program, sign it with a throwaway key, install it on the AVD, and see whether it starts (it will probably show the AirArmor popup: that is task 4's evidence, so screenshot it and note which popup it is).
 3. **S1 — Static spike.** Delegate to `reverse-engineer`, writing `%TEMP%\opencode\raspberry\spike-20261109\spike.md`, using per-job IDA copies, jadx on the DEX files and `aapt2`. Questions (answer each with addresses and tags; `INFERRED` where unproven):
@@ -82,10 +74,11 @@ You are the receiving agent with **zero context**. The user branched the work in
 
 **Tests.** Host unit tests for pure logic (descriptor parsing, host matching, port map, PKCE, patch application on synthetic binaries and a synthetic tiny APK); golden test of the patcher on the synthetic APK (byte-identical rerun); stub-server device tests through the `tester` agent; a final run against the lab Cherry (default ports at `10.0.2.2`) and then the user's production endpoint.
 
-## Status (2026-11-09)
+## Status (2026-11-10)
 
 | Item | State |
 | --- | --- |
+| Context and lab handoff | accepted; APK matches, Raspberry AVD attached, Cherry not running |
 | Repo skeleton, gate, `check-repo` | not started |
 | Toolchain installed and recorded | not started |
 | S1 static spike | not started |

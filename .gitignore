@@ -50,6 +50,7 @@ raspberry.local.*
 *.exe
 *.log
 __pycache__/
+.venv/
 .gradle/
 local.properties
 .idea/
