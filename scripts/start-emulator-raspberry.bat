@@ -5,4 +5,4 @@ if not exist "%EMULATOR%" (
   exit /b 1
 )
 echo Starting AVD Raspberry.
-start "Raspberry AVD" "%EMULATOR%" -avd Raspberry -netdelay none -netspeed full -gpu swiftshader_indirect -no-snapshot-load
+start "Raspberry AVD" "%EMULATOR%" -avd Raspberry -netdelay none -netspeed full -gpu swiftshader_indirect -no-snapshot-load -port 5559
