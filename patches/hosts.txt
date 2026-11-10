@@ -1,0 +1,22 @@
+# Compiled-in native redirect draft. The final public host inventory is the main agent's docs, not this file.
+#
+# suffix NAME
+#   Match NAME, or a longer name whose final labels are NAME (a dot, then NAME).
+#   Label boundary: evilplay.naver.jp does not match play.naver.jp. Not a substring.
+# exact NAME
+#   Match that name only. Children are not included.
+# Comparison is case-insensitive. One trailing dot is ignored; a second trailing dot does not match.
+# IP literals and inet_aton spellings (hex, octal, short forms, overlong octets) are never redirected.
+# .line.me is not a suffix: fortune.line.me and other one-offs stay out. Only the exact names below.
+# ads.play.naver.jp is also covered by suffix play.naver.jp; the exact line keeps the lab DNS-sink term.
+
+suffix play.naver.jp
+suffix play.naver.net
+suffix line-scdn.net
+suffix line-apps.com
+suffix line.naver.jp
+exact ads.play.naver.jp
+exact lan3rd.line.me
+exact terms.line.me
+exact notice2.line.me
+exact help2.line.me

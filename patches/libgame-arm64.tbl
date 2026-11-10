@@ -1,0 +1,5 @@
+# AirArmor state 6 only. Offsets are uncompressed ELF file offsets, not APK zip offsets.
+# Jump-table byte for state 6. 00 branches to the abnormal return; f8 branches to the normal return.
+id airarmor-state6-arm64
+sha256 d824c3ef72ac1948f3c5a31619879384f4659c9306e6f5a1b04793334e795b04
+edit 0x2f98021 00 f8 state-6 jump-table byte

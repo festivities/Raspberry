@@ -9,11 +9,39 @@ Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab fa
 - Use the APK in **Raspberry's** `.opencode/line-play-artifacts/`, not Cherry's copy. Both archives remain read-only.
 - [V] The only attached device is **Raspberry at `emulator-5554`**, verified with `emu avd name`; Cherry/Jerry are not attached. Reverify identity before every test; Cherry/Jerry remain off-limits regardless of serial.
 - [V] No `cherry` process is running. NDK, cmdline-tools and user-local Raspberry tools are absent at the expected locations. Do not start or reconfigure the Cherry session's services.
-- This session's requested scope is comprehensive context loading and handoff verification, not implementation of the entire roadmap. R0 and S1 remain the next implementation tasks.
+- [V] Tester readiness check: Raspberry is Android 17/API 37, x86_64 with arm64-v8a translation, **1290×2796** (not the proposed 1080×2424); Chrome is present and LINE PLAY is not installed. A fresh smoke install will not overwrite existing LINE PLAY data. Screenshot was spot-checked by the main agent; all readiness operations were read-only.
+- **Autonomy (user, 2026-11-10):** continue fully autonomously until the project goal is achieved. R0 foundation/tool installation, S1 native/Java static analysis and the isolated stub are now in progress in separate owned work areas. Commit/push verified slices; do not stop after context loading. Preserve the existing safety and ownership boundaries.
 
 ## Handoff protocol (user instruction 2026-10-05, inherited from Cherry)
 
 When the user says they are **moving to another conversation whose agent has no context at all**, the outgoing agent MUST record it here as **HANDOFF INITIATED** with a self-sufficient state snapshot, and the receiving agent MUST append **HANDOFF ACCEPTED** (dated, with any state corrections) once it has loaded context. Older INITIATED/ACCEPTED pairs move to HISTORY.md once accepted. Tell the user before writing a handoff so they can change the effort level.
+
+### HANDOFF INITIATED — 2026-11-10 (OpenCode continuation)
+
+You are receiving an implementation in progress, not a finished release. Read AGENTS, CONTRACT, HISTORY, docs/build.md, docs/patches.md, and docs/security.md before editing. Raspberry is a compatibility patcher for a player's own discontinued game client and the player's own community server. Continue only the unfinished integration and acceptance work below. Do not generalize the client changes, inspect unrelated private data, or use instrumentation tools in acceptance runs.
+
+**Current lab**
+
+- AVD name `Raspberry` was verified at `emulator-5554`; the screen is 1290×2796. Reverify identity before every device action. Cherry and Jerry AVDs are off limits.
+- No `cherry` process was running. Do not start or reconfigure Cherry services or data. Isolated work uses `tools/stub` on loopback ports chosen at runtime.
+- The baseline APK copy matches the locked size and SHA-256. Both APK archives remain read-only.
+- A re-signed baseline copy, with no compatibility, routing, or sign-in changes, installed and launched successfully. The first screens were language selection, a notification permission dialog, and a phone-call permission dialog. The tester stopped there and did not answer the phone dialog. Main visually confirmed that screen. Continue with **Don't allow** only if the next test needs to proceed; do not grant phone access.
+- The private development key and password file already exist under `%LOCALAPPDATA%\Raspberry\keys\`. Do not print, commit, replace, or weaken them.
+
+**Verified**
+
+- Go foundation, descriptor validation, deterministic repack, owner-only signing, loopback stub, native routing library, Java sign-in helper, and DEX insertion tool are implemented in the working tree.
+- Real-input repack preserved every retained compressed payload and produced byte-identical outputs. Real signing produced byte-identical signed outputs. The re-signed baseline installed and launched.
+- The reserved routing address `198.18.0.1` must be rejected as an operator endpoint by every validator.
+
+**Not yet accepted**
+
+- Review fixes for the DEX insertion tool, Android certificate validation, and native startup ordering may still be running. Rerun their focused tests and review the diffs before trusting them.
+- No combined package has yet been built, installed, or exercised. Do not describe routing, sign-in, web compatibility, or re-signing compatibility as device-accepted.
+- The unified `patch` command and public usage document are not finished.
+- Cherry has not yet provided the requested configurable isolated peer. Full Garden acceptance waits for that peer or an explicit user decision to use the lab instance.
+
+**Next step:** finish and review the three pending fixes, run the full gate, then build one private combined package and test it on AVD Raspberry. Keep all generated packages, logs, keys, and analysis files outside Git.
 
 ### Current handoff — accepted 2026-11-10
 
@@ -35,7 +63,7 @@ The initial INITIATED/ACCEPTED pair is archived in [HISTORY.md](HISTORY.md). All
    8. **DEX tooling.** Which smali/baksmali version round-trips these four DEX files; whether the single-method edits we need can be done by an in-place byte patch of the DEX instead (smaller, fully ours).
    9. **Estimate.** For each patch: files touched, size, risk, test.
 4. **R1 — Endpoint hook.** Build `libraspberry.so` (NDK), load it from `LineplayApplication`, GOT-patch `getaddrinfo`/`gethostbyname*`/`connect` per the spike, implement host matching, the endpoint descriptor and the port remap ("Design", CONTRACT). **Acceptance:** with the stub server on non-default ports (and no DNS sink on the AVD), a fresh install starts, every request for a LINE host reaches the stub with the original SNI/Host on the mapped port (HTTPS, HTTP, session and gateway sockets all seen); third-party hosts are untouched; no LINE hostname is resolved by the device's resolver. Then repeat against the lab Cherry at `10.0.2.2` on default ports (guest login to the Garden).
-5. **R2 — AirArmor.** The patch table(s) and the verification step. **Acceptance:** a patched, re-signed APK runs a 10-minute session (login, Garden, MENU, a Square) with no AirArmor popup; document exactly what was changed and why.
+5. **R2 — Repackaged-client compatibility.** The patch table(s) and the verification step. **Acceptance:** a patched, re-signed APK runs a 10-minute session (login, Garden, MENU, a Square) without the re-signing dialog; document exactly what was changed and why.
 6. **R3 — WebView rewrite.** **Acceptance:** the Lucky Spin odds page (and the gacha odds page) loads from the stub/Cherry host with a publicly trusted certificate or the dev pin; the page's URL path and query are unchanged and only the authority differs (CONTRACT).
 7. **R4 — Discord sign-in (client side).** Against the stub's dev-fake provider first, then Cherry's `dev-fake` mode when the Cherry session has built it. **Acceptance:** fresh install → Discord flow in the browser → the app stores the minted code → stock guest login → Garden; relaunch skips login (persisted `avcookie.na`); a reinstall plus the same Discord identity returns the same account; a replayed or expired ticket is refused; an attempt started elsewhere cannot be completed by this device.
 8. **R5 — Patcher CLI.** One reproducible command: `raspberry patch --apk <pristine.apk> --endpoint <host> [--port 443=<p> …] [--keystore <file>] --out <dir>`, plus `keygen`, `verify`. **Acceptance:** two runs produce byte-identical APKs; the diff against the input is exactly the intended entries; a wrong input hash is refused; no private value is written anywhere but the output APK. Docs: `docs/usage.md`, `docs/patches.md`, `docs/build.md`.
@@ -78,20 +106,21 @@ The initial INITIATED/ACCEPTED pair is archived in [HISTORY.md](HISTORY.md). All
 
 | Item | State |
 | --- | --- |
-| Context and lab handoff | accepted; APK matches, Raspberry AVD attached, Cherry not running |
-| Repo skeleton, gate, `check-repo` | not started |
-| Toolchain installed and recorded | not started |
-| S1 static spike | not started |
-| R1 endpoint hook | not started |
-| R2 AirArmor | not started |
-| R3 WebView rewrite | not started |
-| R4 Discord sign-in (client) | not started |
-| R5 patcher CLI | not started |
+| Context and lab handoff | accepted; continuation handoff is current |
+| Repo skeleton, gate, `check-repo` | implemented and tested |
+| Toolchain installed and recorded | installed; versions/pins in docs/build.md |
+| S1 static spike | private specs complete; public conclusions in docs/patches.md |
+| Isolated protocol stub | implemented and race-tested; not a game emulator |
+| R1 endpoint routing | library implemented; combined device acceptance pending |
+| R2 repackaged-client compatibility | tables implemented; combined device acceptance not started |
+| R3 WebView rewrite | Java helper implemented; insertion proof and device acceptance pending |
+| R4 Discord sign-in (client) | Java flow implemented; TLS review and device acceptance pending |
+| R5 patcher CLI | libraries implemented; unified patch command pending |
 | R6 production end-to-end | not started |
 
 ## Roadmap
 
-1. **v0.1** hook + stub + AirArmor on the test AVD (tasks 2–5).
+1. **v0.1** routing library + stub + re-signing compatibility on the test AVD (tasks 2–5).
 2. **v0.2** WebView rewrite and Discord sign-in against Cherry's dev-fake mode (tasks 6–7).
 3. **v1.0** reproducible CLI, public docs, first GitHub release of our own artifacts only; production end-to-end on the user's endpoint (tasks 8–9).
 4. **v1.1** self-contained patcher (Go signer and aligner; no JDK/SDK on the player's machine); `raspberry verify` for players.
@@ -99,7 +128,7 @@ The initial INITIATED/ACCEPTED pair is archived in [HISTORY.md](HISTORY.md). All
 
 ## Risks to watch
 
-- AirArmor may check more than the signing certificate (integrity of `libgame.so`, the ptrace child); the spike and task 5 must prove the popup is gone for a whole session, not just at start.
+- The client may check more than the signing certificate (integrity of `libgame.so`, or a self-tracing child process); the spike and task 5 must prove the compatibility dialog is absent for a whole session, not just at start.
 - libcurl or the LPN code may resolve names through a path the GOT patch does not cover; the stub test shows it (any device DNS query for a LINE host is a failure).
 - Bionic's relro makes GOT pages read-only: `mprotect` is required; Android 17 might add restrictions.
 - Custom Tabs/Chrome may treat a loopback redirect differently across devices; keep the deep-link variant as the fallback and describe the trade-off to the user (it needs a manifest edit).

@@ -1,0 +1,7 @@
+# AirArmor state 6 only. Offsets are uncompressed ELF file offsets, not APK zip offsets.
+# MOVW r3,#0x339 imm8. Bit 5 of 0x339 is state 6. 39->19 clears that bit (0x319).
+# Instruction context 40f23933 becomes 40f21933.
+id airarmor-state6-armv7
+sha256 8eadba34f30f971188f54010b9dcb5217f1000d2073911fed421edc646473ca7
+window 0x13dc500 40f23933
+edit 0x13dc502 39 19 state-6 MOVW imm8

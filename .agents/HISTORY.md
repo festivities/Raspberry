@@ -40,3 +40,10 @@ You are the receiving agent with **zero context**. The user branched the work in
 - [V] `Get-Process -Name cherry` found no process. The old PID/listener snapshot is not current; no service was started, stopped or reconfigured.
 - [V] Go 1.27.1, gcc 16.1.0, Temurin JDK 25.0.3, SDK build-tools 36.0.0 and aapt2 2.20-13193326 are present. `JAVA_HOME` still incorrectly includes `bin`. No SDK NDK/cmdline-tools directories or `%LOCALAPPDATA%\Raspberry` tool installation exist. No disk-wide tool search or individual zipalign/apksigner/d8 recheck was done; previous missing-tool claims otherwise remain unverified snapshots.
 - Repo began at `168d30a` on `main`, with existing untracked `.claude/`, `AGENTS.md`, `CLAUDE.md` and `scripts/`. Leave these untouched and unstaged. This change updates context only; implementation, tool installation and APK/device acceptance are not started. Next work is R0 toolchain/repo gate, then S1 static spike.
+
+## 2026-11-10 — implementation checkpoint
+
+- Toolchain installation, repository foundation, isolated stub, native routing library, Java sign-in helper, DEX insertion tool, and signing/repack libraries were implemented and reviewed. The public conclusions are in `docs/build.md`, `docs/patches.md`, and `docs/security.md`.
+- [V] The baseline copy matches the locked hash. Real repack outputs were byte-identical and preserved every retained compressed payload. Real signing outputs were byte-identical. A re-signed baseline package installed and launched on AVD Raspberry. Main visually confirmed the resulting phone-permission screen; no account action was taken.
+- [V] The first launch showed language selection and permission dialogs, not a re-signing compatibility dialog. That observation covers only the unmodified re-signed baseline. It is not acceptance of the later compatibility, routing, web, or sign-in changes.
+- Private analysis notes, generated packages, logs, and development keys remain outside Git. The next session starts from the continuation handoff in PLAN, not from this historical snapshot.
