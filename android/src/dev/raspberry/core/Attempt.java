@@ -11,6 +11,11 @@ public final class Attempt {
     public static final int EXCHANGE = 1;
     public static final int FAIL = 2;
 
+    /** Writes the credential. Runs under the attempt's lock, so it cannot interleave with a cancel. */
+    public interface Writer {
+        boolean write();
+    }
+
     private static final int IDLE = 0;
     private static final int LIVE = 1;
     private static final int EXCHANGING = 2;
@@ -59,13 +64,6 @@ public final class Attempt {
         return EXCHANGE;
     }
 
-    public synchronized void done(int gen) {
-        if (gen == this.gen && phase == EXCHANGING) {
-            phase = DONE;
-            state = null;
-        }
-    }
-
     public synchronized void fail(int gen) {
         if (gen == this.gen && phase != DONE) {
             failLocked();
@@ -80,8 +78,47 @@ public final class Attempt {
         }
     }
 
-    public synchronized boolean live(int gen) {
-        return gen == this.gen && (phase == LIVE || phase == EXCHANGING);
+    /**
+     * Usable now: this generation, unfinished, and before the deadline. An attempt that ran
+     * past its deadline is failed here, so no live phase outlives it and a retry can begin.
+     */
+    public synchronized boolean live(int gen, long now) {
+        if (gen != this.gen || (phase != LIVE && phase != EXCHANGING)) {
+            return false;
+        }
+        if (now >= deadline) {
+            failLocked();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Stores the credential only while this exact generation is still exchanging and in time.
+     * The writer runs under this monitor: a cancel cannot land between the check and the store.
+     * A false or throwing writer fails the attempt.
+     */
+    public synchronized boolean commit(int gen, long now, Writer writer) {
+        if (writer == null || gen != this.gen || phase != EXCHANGING) {
+            return false;
+        }
+        if (now >= deadline) {
+            failLocked();
+            return false;
+        }
+        boolean ok;
+        try {
+            ok = writer.write();
+        } catch (RuntimeException e) {
+            ok = false;
+        }
+        if (ok) {
+            phase = DONE;
+            state = null;
+        } else {
+            failLocked();
+        }
+        return ok;
     }
 
     private void failLocked() {

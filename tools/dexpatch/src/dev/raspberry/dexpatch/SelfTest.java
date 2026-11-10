@@ -5,11 +5,17 @@ import com.android.tools.smali.dexlib2.Opcode;
 import com.android.tools.smali.dexlib2.Opcodes;
 import com.android.tools.smali.dexlib2.builder.Label;
 import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderArrayPayload;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction11x;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction12x;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction20t;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction21s;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction21t;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction22t;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction31t;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction3rc;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction51l;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderPackedSwitchPayload;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.Method;
 import com.android.tools.smali.dexlib2.iface.MethodImplementation;
@@ -138,6 +144,8 @@ final class SelfTest {
         substringIsNotAnEdit();
         verifyIgnoresSubstring(dir);
         runShape(dir);
+        operandDrift(dir);
+        editedTailIsNotASubstring(dir);
         System.out.println("selftest ok");
     }
 
@@ -475,11 +483,129 @@ final class SelfTest {
     private static List<String> codeRows(Method m) {
         List<String> rows = new ArrayList<>();
         for (String row : Semantic.rows(m.getImplementation())) {
-            if (!row.startsWith("try ")) {
+            if (!row.startsWith("try ") && !row.startsWith("regs ")) {
                 rows.add(row);
             }
         }
         return rows;
+    }
+
+    /** Each operand the old row format ignored must fail verify on its own. */
+    private static void operandDrift(File dir) throws Exception {
+        drift(dir, "range", rangeMethod(0, 2), rangeMethod(1, 2));
+        drift(dir, "wide", wideMethod(0x1_0000_0000L), wideMethod(0x2_0000_0000L));
+        drift(dir, "switch", switchMethod(1, 0, 1), switchMethod(9, 1, 0));
+        drift(dir, "array", arrayMethod(1, 2), arrayMethod(1, 3));
+        drift(dir, "regs", regsMethod(2), regsMethod(3));
+        List<String> eof = Semantic.rows(tryToEnd(true).getImplementation());
+        List<String> mid = Semantic.rows(tryToEnd(false).getImplementation());
+        if (eof.equals(mid) || !contains(eof, "try 0..2 ->")) {
+            fail("try end-of-code not indexed " + eof + " vs " + mid);
+        }
+        drift(dir, "try", tryToEnd(true), tryToEnd(false));
+    }
+
+    private static void editedTailIsNotASubstring(File dir) throws Exception {
+        MutableMethodImplementation body = new MutableMethodImplementation(1);
+        body.addInstruction(Refs.retVoid());
+        Method orig = renamed(method("LoginWeb", "V", List.of(), body, false),
+                "Ljp/naver/lineplay/login/LoginAdapter;", "LoginWeb");
+        MutableMethodImplementation fat = new MutableMethodImplementation(5);
+        fat.addInstruction(Refs.retVoid());
+        try {
+            Main.checkEdited(orig, copy(orig, fat));
+            fail("return-void register drift accepted");
+        } catch (IllegalStateException e) {
+            if (!e.getMessage().contains("edit check failed")) {
+                fail(e.getMessage());
+            }
+        }
+        File dex = new File(dir, "rewrite-tail.dex");
+        write(dex, List.of(rewriteStaticMethod()));
+        Method rewrite = asSetCookie(find(Main.load(dex.getPath()), "rewriteStatic"));
+        MutableMethodImplementation tail = new MutableMethodImplementation(Edits.prefixRewrite(rewrite, rewrite.getImplementation(), 1));
+        tail.addInstruction(Refs.const4(0, 1));
+        try {
+            Main.checkEdited(rewrite, copy(rewrite, tail));
+            fail("rewrite tail drift accepted");
+        } catch (IllegalStateException e) {
+            if (!e.getMessage().contains("edit check failed")) {
+                fail(e.getMessage());
+            }
+        }
+    }
+
+    private static void drift(File dir, String name, Method a, Method b) throws Exception {
+        if (Semantic.rows(a.getImplementation()).equals(Semantic.rows(b.getImplementation()))) {
+            fail(name + " canonical miss");
+        }
+        File left = new File(dir, name + "-a.dex");
+        File right = new File(dir, name + "-b.dex");
+        write(left, List.of(a));
+        write(right, List.of(b));
+        try {
+            Main.verify(left.getPath(), right.getPath());
+            fail(name + " drift accepted");
+        } catch (IllegalStateException e) {
+            if (!e.getMessage().contains("untouched drift")) {
+                fail(name + " " + e.getMessage());
+            }
+        }
+    }
+
+    private static Method rangeMethod(int start, int count) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(4);
+        impl.addInstruction(new BuilderInstruction3rc(Opcode.INVOKE_STATIC_RANGE, start, count,
+                Refs.method("Ldev/raspberry/dexpatch/Marker;", "span", List.of("I", "I"), "V")));
+        impl.addInstruction(Refs.retVoid());
+        return method("span", "V", List.of(), impl, true);
+    }
+
+    private static Method wideMethod(long literal) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(2);
+        impl.addInstruction(new BuilderInstruction51l(Opcode.CONST_WIDE, 0, literal));
+        impl.addInstruction(Refs.retVoid());
+        return method("wide", "V", List.of(), impl, true);
+    }
+
+    private static Method switchMethod(int firstKey, int left, int right) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(1);
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.retVoid());
+        impl.replaceInstruction(2, new BuilderInstruction31t(Opcode.PACKED_SWITCH, 0, impl.newLabelForIndex(3)));
+        impl.replaceInstruction(3, new BuilderPackedSwitchPayload(firstKey, List.of(
+                impl.newLabelForIndex(left), impl.newLabelForIndex(right))));
+        return method("sw", "V", List.of(), impl, true);
+    }
+
+    private static Method arrayMethod(int a, int b) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(1);
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.retVoid());
+        impl.replaceInstruction(0, new BuilderInstruction31t(Opcode.FILL_ARRAY_DATA, 0, impl.newLabelForIndex(2)));
+        impl.replaceInstruction(2, new BuilderArrayPayload(4, List.of(a, b)));
+        return method("arr", "V", List.of(), impl, true);
+    }
+
+    private static Method regsMethod(int regs) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(regs);
+        impl.addInstruction(Refs.retVoid());
+        return method("regs", "V", List.of(), impl, true);
+    }
+
+    /** const/16 is 2 code units. End-of-code is not an instruction address and must still index. */
+    private static Method tryToEnd(boolean toEnd) {
+        MutableMethodImplementation impl = new MutableMethodImplementation(1);
+        impl.addInstruction(new BuilderInstruction21s(Opcode.CONST_16, 0, 1));
+        impl.addInstruction(Refs.retVoid());
+        impl.addCatch("Ljava/lang/RuntimeException;",
+                impl.newLabelForIndex(0),
+                impl.newLabelForIndex(toEnd ? 2 : 1),
+                impl.newLabelForIndex(1));
+        return method("tried", "V", List.of(), impl, true);
     }
 
     private static List<String> shift(List<String> rows, int by) {

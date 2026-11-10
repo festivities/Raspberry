@@ -1,5 +1,7 @@
 package dev.raspberry.core;
 
+import java.util.Locale;
+
 /**
  * Authority-only rewrite. Path, query and fragment are the original raw slices.
  * java.net.URI rebuilds those components and double-escapes percent sequences.
@@ -52,7 +54,7 @@ public final class WebRewrite {
         if (host == null || host.length() == 0 || host.indexOf('%') >= 0) {
             return false;
         }
-        String h = trimDot(host.toLowerCase());
+        String h = trimDot(host.toLowerCase(Locale.ROOT));
         if (h == null) {
             return false;
         }

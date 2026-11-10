@@ -1,5 +1,6 @@
 package dev.raspberry.core;
 
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -163,7 +164,7 @@ public final class Descriptor {
         if (!validDns(s)) {
             return null;
         }
-        return s.toLowerCase();
+        return s.toLowerCase(Locale.ROOT);
     }
 
     private static boolean numericAddress(String s) {

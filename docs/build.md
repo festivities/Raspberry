@@ -1,6 +1,6 @@
 # Build
 
-Raspberry is under development. Building the Go foundation is not yet a complete APK-patching workflow. No game binaries, decompiler output, signing keys or operator configuration belong in this repository.
+Raspberry is under development. The CLI combines the locally built artifacts and signs a player's own locked APK; see [usage.md](usage.md). Game/auth/web acceptance is separate from a successful build. No game binaries, decompiler output, signing keys or operator configuration belong in this repository.
 
 ## Tools
 
@@ -51,7 +51,7 @@ A synthetic javac → d8 → baksmali → smali → baksmali check passed. That 
 
 Always align **before** signing. The existing tools verified the pristine APK's signature and expected package/version on a private working copy. JDK 25's native-access warning can be suppressed for apksigner with `java --enable-native-access=ALL-UNNAMED -jar ...`; do not mistake stderr warnings for a failed process without checking the exit status.
 
-Signing keys and APK outputs must be outside every repository. Signing and device smoke acceptance of a repacked APK are still pending.
+Signing keys and APK outputs must be outside every repository. Two private combined builds were byte-identical after signing. The retained compressed payloads matched the baseline, with exactly the documented replacements/additions and signing-metadata changes. Signing publishes with a no-replace hard link; filesystems that cannot hard-link fail closed.
 
 ## Python
 

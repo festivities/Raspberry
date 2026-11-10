@@ -801,15 +801,15 @@ func publish(tmp, dst string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Link(tmp, dst); err == nil {
-		if err := os.Remove(tmp); err != nil {
-			return fmt.Errorf("sign: published %s but temp name remains: %w", dst, err)
+	// Link does not replace. A filesystem that cannot hard-link fails closed.
+	if err := os.Link(tmp, dst); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("%w", ErrExists)
 		}
-		return nil
-	} else if os.IsExist(err) {
-		return fmt.Errorf("%w", ErrExists)
-	} else if runtime.GOOS != "windows" {
 		return fmt.Errorf("sign: atomic publish failed: %w", err)
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Remove(tmp); err != nil {
+		return fmt.Errorf("sign: published %s but temp name remains: %w", dst, err)
+	}
+	return nil
 }

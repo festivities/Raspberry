@@ -1,5 +1,5 @@
-// Command raspberry is the patcher CLI. R0 verifies the locked baseline and
-// prints the version. patch and keygen wait on the spike.
+// Command raspberry is the patcher CLI: it verifies the locked baseline,
+// patches it into a signed build, and creates the signing keystore.
 package main
 
 import (
@@ -31,6 +31,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "verify":
 		return cmdVerify(args[1:], stdout, stderr)
+	case "patch":
+		return cmdPatch(args[1:], stdout, stderr)
+	case "keygen":
+		return cmdKeygen(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "raspberry: unknown command %q\n", args[0])
 		usage(stderr)
@@ -59,5 +63,11 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: raspberry verify --apk <file>")
+	fmt.Fprintln(w, "       raspberry patch --apk <file> --endpoint <host> --out <dir> --keystore <file>")
+	fmt.Fprintln(w, "                       (--password-file <file> | --password-env <name>) [--port 443=8443]...")
+	fmt.Fprintln(w, "                       [--dev-pin-sha256 <64 hex>]")
+	fmt.Fprintln(w, "       raspberry keygen --keystore <file> (--password-file <file> | --password-env <name>)")
 	fmt.Fprintln(w, "       raspberry version")
+	fmt.Fprintln(w, "patch is not a standalone builder: it needs scripts/build-native, build-dex, build-dexpatch, and the pinned JDK/SDK/smali tools. See docs/usage.md.")
+	fmt.Fprintln(w, "--dev-pin-sha256 is an extra check after platform TLS. It does not trust a self-signed certificate and is omitted unless set.")
 }

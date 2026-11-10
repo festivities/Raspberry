@@ -1,16 +1,31 @@
 package dev.raspberry.core;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.Locale;
+
 public final class CoreTest {
     private static int fails;
+
+    private static final Attempt.Writer OK = new Attempt.Writer() {
+        public boolean write() {
+            return true;
+        }
+    };
 
     public static void main(String[] args) {
         pkce();
         callback();
         attempt();
+        attemptCompletion();
         rewrite();
         descriptor();
+        turkishLocale();
         pin();
         exchangeBody();
+        sessionCookie();
         if (fails != 0) {
             System.err.println("FAILED " + fails);
             System.exit(1);
@@ -77,16 +92,16 @@ public final class CoreTest {
         check(a.begin(other, t0) == 0, "one-live");
         Callback wrong = Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other);
         check(a.onCallback(gen, wrong, t0) == Attempt.IGNORE, "wrong-state");
-        check(a.live(gen), "still-live");
+        check(a.live(gen, t0), "still-live");
         check(a.onCallback(gen + 1, callback(ticket, state), t0) == Attempt.IGNORE, "other-gen");
-        check(a.live(gen), "gen-isolated");
+        check(a.live(gen, t0), "gen-isolated");
         check(a.onCallback(gen, callback(ticket, state), t0 + Attempt.LIMIT_NS) == Attempt.FAIL, "expiry");
-        check(!a.live(gen), "expired-dead");
+        check(!a.live(gen, t0), "expired-dead");
         int gen2 = a.begin(state, t0);
         check(a.onCallback(gen, callback(ticket, state), t0) == Attempt.IGNORE, "old-gen-after-restart");
         check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.EXCHANGE, "exchange");
         check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay");
-        a.done(gen2);
+        check(a.commit(gen2, t0, OK), "commit");
         check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay-done");
         int gen3 = a.begin(state, t0);
         Callback denied = Callback.parseTarget("/raspberry/cb?error=access_denied&state=" + state);
@@ -96,6 +111,66 @@ public final class CoreTest {
         a.cancel(gen4);
         check(a.onCallback(gen4, Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other), t0) == Attempt.IGNORE, "cancel-ignores");
         check(a.begin(state, t0) != 0, "retry-after-cancel");
+    }
+
+    /**
+     * Stale-completion cases: a cancelled or superseded generation must never write, a new one
+     * must be unaffected, and a write that lands after the deadline must be refused.
+     */
+    private static void attemptCompletion() {
+        String state = "abcdefghij123456";
+        String ticket = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        long t0 = 1_000L;
+        int[] writes = {0};
+        Attempt.Writer count = new Attempt.Writer() {
+            public boolean write() {
+                writes[0]++;
+                return true;
+            }
+        };
+
+        // Cancelled between HTTP completion and the store: the store must not run.
+        Attempt a = new Attempt();
+        int g1 = a.begin(state, t0);
+        check(!a.commit(g1, t0, count) && writes[0] == 0, "c-no-exchange-no-write");
+        check(a.onCallback(g1, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-exchange");
+        a.cancel(g1);
+        check(!a.commit(g1, t0, count) && writes[0] == 0, "c-cancel-no-write");
+        check(!a.live(g1, t0), "c-cancel-dead");
+
+        // A newer generation owns the store: the old completion writes nothing and does not
+        // clear or consume the new attempt.
+        int g2 = a.begin(state, t0);
+        check(g2 != 0 && g2 != g1, "c-next-gen");
+        check(a.onCallback(g2, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-next-exchange");
+        check(!a.commit(g1, t0, count) && writes[0] == 0, "c-old-gen-no-write");
+        check(a.commit(g2, t0, count) && writes[0] == 1, "c-new-gen-write");
+        check(!a.commit(g2, t0, count) && writes[0] == 1, "c-done-no-rewrite");
+
+        // Accepted in time, stored after the deadline: refused.
+        Attempt b = new Attempt();
+        int g3 = b.begin(state, t0);
+        check(b.onCallback(g3, callback(ticket, state), t0 + Attempt.LIMIT_NS - 1) == Attempt.EXCHANGE, "x-exchange");
+        check(!b.commit(g3, t0 + Attempt.LIMIT_NS, count) && writes[0] == 1, "x-expired-no-write");
+        check(!b.live(g3, t0 + Attempt.LIMIT_NS), "x-expired-dead");
+
+        // live() enforces the deadline itself.
+        Attempt c = new Attempt();
+        int g4 = c.begin(state, t0);
+        check(c.live(g4, t0 + Attempt.LIMIT_NS - 1), "l-before-deadline");
+        check(!c.live(g4, t0 + Attempt.LIMIT_NS), "l-at-deadline");
+        check(c.begin(state, t0) != 0, "l-retry-after-expiry");
+
+        // A throwing writer fails the attempt instead of reporting success.
+        Attempt d = new Attempt();
+        int g5 = d.begin(state, t0);
+        check(d.onCallback(g5, callback(ticket, state), t0) == Attempt.EXCHANGE, "t-exchange");
+        boolean failedClosed = !d.commit(g5, t0, new Attempt.Writer() {
+            public boolean write() {
+                throw new IllegalStateException("write");
+            }
+        });
+        check(failedClosed && !d.live(g5, t0), "t-throwing-fails");
     }
 
     private static void rewrite() {
@@ -171,6 +246,18 @@ public final class CoreTest {
         check(message("{\"v\":2,\"token\":\"supersecretvalue\"}").indexOf("supersecretvalue") < 0, "error-leak");
     }
 
+    private static void turkishLocale() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(new Locale("tr", "TR"));
+            Descriptor d = Descriptor.parse("{\"v\":1,\"host\":\"ASCII.EXAMPLE\"}");
+            check(d.host().equals("ascii.example"), "host-turkish");
+            check(WebRewrite.rewrite("https://NOTICE2.LINE.ME/Ab%2F?q=I%20#f%2F", d).equals("https://ascii.example/Ab%2F?q=I%20#f%2F"), "rewrite-turkish");
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
+
     private static void pin() {
         String hex = "0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789abcdef";
         byte[] a = HexPin.parse(hex);
@@ -198,6 +285,55 @@ public final class CoreTest {
         check(Json.uniqueCode("{\"uniqueCode\":\"NOT-A-UUID\"}") == null, "code-shape");
         check(Json.uniqueCode("{\"error\":\"invalid_ticket\"}") == null, "code-error");
         check(UuidShape.ok(uuid) && !UuidShape.ok(uuid.toUpperCase()) && !UuidShape.ok(""), "uuid-shape");
+    }
+
+    private static void sessionCookie() {
+        File dir = null;
+        File cookie = null;
+        File nested = null;
+        File sibling = null;
+        try {
+            dir = Files.createTempDirectory("raspberry-session-cookie-").toFile();
+            cookie = new File(dir, "avcookie.na");
+            sibling = new File(dir, "unrelated.pref");
+            writeFile(sibling);
+            check(SessionCookie.clear(dir), "cookie-missing");
+            check(sibling.isFile(), "cookie-missing-preserves-sibling");
+
+            writeFile(cookie);
+            check(SessionCookie.clear(dir) && !cookie.exists(), "cookie-file-removed");
+            check(sibling.isFile(), "cookie-removal-preserves-sibling");
+
+            check(cookie.mkdir(), "cookie-directory-create");
+            nested = new File(cookie, "keep");
+            writeFile(nested);
+            check(!SessionCookie.clear(dir), "cookie-directory-refused");
+            check(cookie.isDirectory() && nested.isFile() && sibling.isFile(), "cookie-directory-untouched");
+        } catch (Exception e) {
+            check(false, "cookie-test-io");
+        } finally {
+            if (nested != null) {
+                nested.delete();
+            }
+            if (cookie != null) {
+                cookie.delete();
+            }
+            if (sibling != null) {
+                sibling.delete();
+            }
+            if (dir != null) {
+                dir.delete();
+            }
+        }
+    }
+
+    private static void writeFile(File file) throws IOException {
+        FileOutputStream out = new FileOutputStream(file);
+        try {
+            out.write(1);
+        } finally {
+            out.close();
+        }
     }
 
     private static Callback callback(String ticket, String state) {

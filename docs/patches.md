@@ -4,6 +4,12 @@ Target: LINE PLAY 10.1.0.0, versionCode 254, APK SHA-256 `aa6495a0430beef0c9a719
 
 Static findings are not device acceptance. Implementation and runtime checks are in progress; no patch here has yet passed a complete game session.
 
+## Package and signing changes
+
+The combined build replaces `classes3.dex` and both `libgame.so` entries, and adds `classes5.dex`, both `libraspberry.so` entries and `assets/raspberry/endpoint.json`. An explicit development pin adds one further asset; ordinary builds do not include it. Package name, version, manifest, resources and the other three DEX entries are unchanged.
+
+Re-signing removes obsolete upstream JAR/APK signatures and replaces them with the operator's signatures. `apksigner` also removes the original `stamp-cert-sha256` source-stamp digest; it cannot attest to this new package. ZIP headers/timestamps and alignment are normalized, while retained compressed payloads are copied unchanged. [V] Two private combined signed builds were byte-identical, and their entry/payload comparison matched this inventory. That is packaging evidence, not game acceptance.
+
 ## Repackaged-client compatibility check
 
 | Entry | Original SHA-256 | Offset | Expected → replacement |
@@ -38,11 +44,15 @@ New Java code belongs in `classes5.dex`. The existing integration points are in 
 - LINE/Facebook and other SNS entry points: disable alternate sign-in paths without disabling unrelated activity results.
 - `LinePlay.updateURLFromUiThread`, its sub-WebView counterpart, `LanLinkUtil.setCookieNLoadUrl`, and the game external-browser entry: rewrite allowlisted web authorities only, preserving raw path/query/fragment.
 
-The proposed implementation uses a typed DEX writer for added references and branch/exception relocation. A naive code-item append with an unchanged DEX map is not accepted as proof of a valid patch. Keep the other three DEX entries, resources and manifest unchanged unless runtime evidence requires another integration point.
+The implementation uses a typed DEX writer for added references and branch/exception relocation. A naive code-item append with an unchanged DEX map is not accepted as proof of a valid patch. Before signing, the CLI checks every untouched method and compares edited methods to their full expected transformation, including registers, range operands, wide literals, switch/array payloads and exception boundaries. Synthetic mutation tests exercise these checks; the real classes3 comparison passes for 56,288 untouched and 14 edited methods. Keep the other three DEX entries, resources and manifest unchanged unless runtime evidence requires another integration point.
 
 **Evidence:** in-game pages instantiate framework `android.webkit.WebView`. The stock SSL-error handlers do not proceed; keep that security property. The browser return is a per-attempt loopback listener, not a new exported component.
 
 **Verify:** valid DEX layout and unchanged-method semantics, then an ART/device launch. Test fresh auth, persisted auth, wrong state/verifier, expiry/replay, cancellation, and authority-only URL rewriting. A self-signed lab pin for Java requests does not make Chrome or WebView trust a certificate.
+
+[V partial device smoke] The combined package installs and shows the Discord gate even when a stock UUID exists without our authorization marker. Chrome rejects the isolated stub's untrusted certificate; Exit/relaunch returns to the gate. A live-cancellation test exposed a status-display bug (the refresh replaced “Cancelled” with generic failure); the fix passed device regression, including a later refresh, a new attempt and Exit/relaunch. These observations do not establish successful OAuth, native routing or a game session.
+
+The stored authorization also includes the descriptor's canonical HTTPS origin; legacy or mismatched authorization must return to the gate. On fresh SSO only the old `files/avcookie.na` credential is discarded before saving the new authorization, preventing another endpoint/identity from receiving the previous native session. Same-origin normal relaunch remains unchanged. Exact-file cleanup has host tests for absence, regular-file removal, directory refusal and preservation of unrelated files; full exchange/session runtime proof still needs a trusted peer.
 
 **Risk:** early AirArmor user-ID registration happens before the startup runnable. If an absent UUID causes a failure, defer the real registration until authentication and preserve its result handling; do not suppress state 1 or unrelated protection checks. Automatic guest-transport entry after Discord also needs a verified engine-thread integration point.
 

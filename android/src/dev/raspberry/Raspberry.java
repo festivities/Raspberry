@@ -23,6 +23,7 @@ import dev.raspberry.core.HexPin;
 import dev.raspberry.core.Json;
 import dev.raspberry.core.PinPolicy;
 import dev.raspberry.core.Pkce;
+import dev.raspberry.core.SessionCookie;
 import dev.raspberry.core.UuidShape;
 import dev.raspberry.core.WebRewrite;
 import java.io.ByteArrayOutputStream;
@@ -59,6 +60,7 @@ import javax.net.ssl.X509TrustManager;
 public final class Raspberry {
     static final String PREF_UUID = "uuid";
     static final String PREF_MARKER = "raspberry.discord";
+    private static final String PREF_ORIGIN = "raspberry.discord.origin";
     private static final int MAX_BODY = 16 * 1024;
     private static final int MAX_HTTP = 4096;
     private static final int MAX_ACCEPTS = 8;
@@ -73,11 +75,11 @@ public final class Raspberry {
     private static String pinnedHost;
     private static boolean pinLogged;
 
+    // Main thread only: the attempt that owns the dialog, its listener, and the UI flags.
     private static final Attempt attempt = new Attempt();
     private static ServerSocket socket;
-    private static Thread waiter;
-    private static Pkce pkce;
     private static int liveGen;
+    private static Activity attemptActivity;
 
     private static Dialog dialog;
     private static Activity dialogActivity;
@@ -85,6 +87,7 @@ public final class Raspberry {
     private static Button discordBtn;
     private static Button retryBtn;
     private static boolean failed;
+    private static boolean cancelled;
 
     private Raspberry() {}
 
@@ -101,9 +104,17 @@ public final class Raspberry {
             application = context;
         }
         capture(application);
+        if (!ensureConfig(application)) {
+            return "";
+        }
+        Descriptor current = endpoint;
+        if (current == null) {
+            return "";
+        }
+        String origin = "https://" + current.httpsAuthority();
         try {
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(application);
-            if (!prefs.getBoolean(PREF_MARKER, false)) {
+            if (!prefs.getBoolean(PREF_MARKER, false) || !origin.equals(prefs.getString(PREF_ORIGIN, ""))) {
                 return "";
             }
             String uuid = prefs.getString(PREF_UUID, "");
@@ -331,7 +342,7 @@ public final class Raspberry {
     }
 
     private static void bindButtons() {
-        boolean live = liveGen != 0 && attempt.live(liveGen);
+        boolean live = liveGen != 0 && attempt.live(liveGen, System.nanoTime());
         if (discordBtn != null) {
             discordBtn.setEnabled(!live && config != 2);
         }
@@ -347,8 +358,11 @@ public final class Raspberry {
         if (config == 2) {
             return "Sign-in is unavailable.";
         }
-        if (liveGen != 0 && attempt.live(liveGen)) {
+        if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
             return "Waiting for the browser.";
+        }
+        if (cancelled) {
+            return "Cancelled. Tap Discord to try again.";
         }
         if (failed) {
             return "Sign-in failed. Tap Retry.";
@@ -357,9 +371,10 @@ public final class Raspberry {
     }
 
     private static void start(Activity activity) {
-        if (liveGen != 0 && attempt.live(liveGen)) {
+        if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
             return;
         }
+        cancelled = false;
         if (!ensureConfig(activity.getApplicationContext()) || endpoint == null) {
             setStatus("Sign-in is unavailable.");
             return;
@@ -373,29 +388,28 @@ public final class Raspberry {
             ss.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), 0));
             int port = ss.getLocalPort();
             String ret = AuthUrl.loopback(port);
-            Pkce next = Pkce.generate();
+            Pkce proof = Pkce.generate();
             String state = Pkce.newState();
-            String url = ret == null ? null : AuthUrl.start(endpoint, next.challenge, ret, state);
+            String url = ret == null ? null : AuthUrl.start(endpoint, proof.challenge, ret, state);
             if (url == null) {
                 failed = true;
                 setStatus("Sign-in failed. Tap Retry.");
                 return;
             }
-            long now = System.nanoTime();
-            gen = attempt.begin(state, now);
+            gen = attempt.begin(state, System.nanoTime());
             if (gen == 0) {
                 failed = true;
                 setStatus("Sign-in failed. Tap Retry.");
                 return;
             }
             ss.setSoTimeout(1000);
-            pkce = next;
             socket = ss;
-            Thread thread = new Thread(acceptLoop(gen, ss, now + Attempt.LIMIT_NS), "raspberry-cb");
-            thread.setDaemon(true);
-            waiter = thread;
-            thread.start();
             liveGen = gen;
+            attemptActivity = activity;
+            // The loop owns the PKCE proof for this generation; no other thread can reach it.
+            Thread thread = new Thread(acceptLoop(gen, ss, proof), "raspberry-cb");
+            thread.setDaemon(true);
+            thread.start();
             openBrowser(activity, Uri.parse(url));
             armed = true;
             failed = false;
@@ -413,19 +427,19 @@ public final class Raspberry {
                 if (gen != 0) {
                     attempt.cancel(gen);
                 }
-                clearSecrets(gen);
                 if (liveGen == gen) {
                     liveGen = 0;
+                    attemptActivity = null;
                 }
             }
         }
     }
 
     private static void retry(Activity activity) {
-        if (liveGen != 0 && attempt.live(liveGen)) {
+        if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
             abandon();
-            failed = true;
-            setStatus("Cancelled. Tap Discord to try again.");
+            cancelled = true;
+            failed = false;
             bindButtons();
             return;
         }
@@ -447,12 +461,12 @@ public final class Raspberry {
         activity.startActivity(new Intent(Intent.ACTION_VIEW, uri));
     }
 
-    private static Runnable acceptLoop(final int gen, final ServerSocket ss, final long deadline) {
+    private static Runnable acceptLoop(final int gen, final ServerSocket ss, final Pkce proof) {
         return new Runnable() {
             public void run() {
                 int accepts = 0;
                 try {
-                    while (System.nanoTime() < deadline && attempt.live(gen)) {
+                    while (attempt.live(gen, System.nanoTime())) {
                         Socket client = null;
                         try {
                             client = ss.accept();
@@ -467,12 +481,12 @@ public final class Raspberry {
                             }
                             continue;
                         }
-                        Callback cb = readCallback(client);
+                        Callback cb = readCallback(client, gen);
                         int decision = attempt.onCallback(gen, cb, System.nanoTime());
                         if (decision == Attempt.EXCHANGE) {
                             write(client, 200, "You can close this tab.");
                             close(client);
-                            finishExchange(gen, cb.ticket);
+                            finishExchange(gen, cb.ticket, proof);
                             return;
                         }
                         if (decision == Attempt.FAIL) {
@@ -484,73 +498,96 @@ public final class Raspberry {
                         write(client, cb == null ? 404 : 400, "Ignored.");
                         close(client);
                     }
-                    if (attempt.live(gen)) {
-                        attempt.fail(gen);
-                        markFailed(gen);
-                    }
+                    attempt.fail(gen);
+                    markFailed(gen);
                 } catch (Exception e) {
-                    if (attempt.live(gen)) {
+                    if (attempt.live(gen, System.nanoTime())) {
                         attempt.fail(gen);
                         markFailed(gen);
                     }
                 } finally {
                     close(ss);
-                    clearSecrets(gen);
                 }
             }
         };
     }
 
-    private static void finishExchange(final int gen, String ticket) {
-        Pkce proof = pkce;
+    /**
+     * Runs off the main thread up to the HTTP call, then hands the result to the main thread:
+     * cancellation and the credential write are both main-thread actions, so they cannot
+     * interleave. The write re-checks this generation, the deadline, and that the activity
+     * which started this attempt is still open. A check from before the HTTP call cannot authorize.
+     */
+    private static void finishExchange(final int gen, String ticket, Pkce proof) {
         String code = null;
         try {
-            if (proof == null || !attempt.live(gen)) {
-                attempt.fail(gen);
-                markFailed(gen);
-                return;
-            }
-            try {
-                code = postExchange(ticket, proof.verifier);
-            } catch (Exception e) {
-                code = null;
-            }
-            if (!attempt.live(gen) || code == null || !commit(code)) {
-                attempt.fail(gen);
-                markFailed(gen);
-                return;
-            }
-            attempt.done(gen);
-            MAIN.post(new Runnable() {
-                public void run() {
+            code = postExchange(ticket, proof.verifier);
+        } catch (Exception e) {
+            code = null;
+        }
+        final String got = code;
+        MAIN.post(new Runnable() {
+            public void run() {
+                if (liveGen != gen) {
+                    return; // cancelled, or a newer attempt owns the store
+                }
+                if (!ownerOpen()) {
+                    attempt.cancel(gen);
                     liveGen = 0;
+                    attemptActivity = null;
+                    return;
+                }
+                if (got != null && attempt.commit(gen, System.nanoTime(), new Attempt.Writer() {
+                    public boolean write() {
+                        // Re-read under the attempt lock. An earlier open check must not authorize.
+                        return ownerOpen() && store(got);
+                    }
+                })) {
+                    liveGen = 0;
+                    attemptActivity = null;
                     if (app != null && deviceUuid(app).length() > 0) {
                         dismiss();
                     }
+                    return;
                 }
-            });
-        } finally {
-            code = null;
-            clearSecrets(gen);
-        }
+                attempt.fail(gen);
+                markFailed(gen);
+            }
+        });
     }
 
-    private static boolean commit(String code) {
+    /** The activity that started this attempt, still able to receive the result. */
+    private static boolean ownerOpen() {
+        Activity owner = attemptActivity;
+        return owner != null && !owner.isFinishing() && !owner.isDestroyed();
+    }
+
+    private static boolean store(String code) {
         Context context = app;
-        if (context == null || !UuidShape.ok(code)) {
+        Descriptor current = endpoint;
+        if (context == null || current == null || !UuidShape.ok(code)) {
+            return false;
+        }
+        String origin = "https://" + current.httpsAuthority();
+        // A fresh SSO must not send the previous endpoint's AV_AUTH to this origin.
+        if (!SessionCookie.clear(context.getFilesDir())) {
             return false;
         }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
         SharedPreferences.Editor ed = prefs.edit();
         ed.putBoolean(PREF_MARKER, true);
         ed.putString(PREF_UUID, code);
-        boolean wrote = false;
+        ed.putString(PREF_ORIGIN, origin);
+        boolean stored = false;
         try {
-            wrote = ed.commit();
+            stored = ed.commit()
+                    && prefs.getBoolean(PREF_MARKER, false)
+                    && code.equals(prefs.getString(PREF_UUID, ""))
+                    && origin.equals(prefs.getString(PREF_ORIGIN, ""));
         } catch (RuntimeException e) {
-            wrote = false;
+            stored = false;
         }
-        if (!wrote || !prefs.getBoolean(PREF_MARKER, false) || !code.equals(prefs.getString(PREF_UUID, ""))) {
+        if (!stored) {
             clearLogin(prefs);
             return false;
         }
@@ -561,6 +598,7 @@ public final class Raspberry {
         try {
             SharedPreferences.Editor ed = prefs.edit();
             ed.remove(PREF_UUID);
+            ed.remove(PREF_ORIGIN);
             ed.putBoolean(PREF_MARKER, false);
             ed.commit();
         } catch (RuntimeException ignored) {
@@ -682,7 +720,7 @@ public final class Raspberry {
         }
     }
 
-    private static Callback readCallback(Socket client) {
+    private static Callback readCallback(Socket client, int gen) {
         try {
             client.setSoTimeout(5000);
             InputStream in = client.getInputStream();
@@ -690,6 +728,9 @@ public final class Raspberry {
             int got = 0;
             int lineEnd = -1;
             while (got < buf.length && lineEnd < 0) {
+                if (!attempt.live(gen, System.nanoTime())) {
+                    return null;
+                }
                 int n = in.read(buf, got, buf.length - got);
                 if (n < 0) {
                     break;
@@ -753,7 +794,6 @@ public final class Raspberry {
                     return;
                 }
                 failed = true;
-                clearSecrets(gen);
                 liveGen = 0;
                 setStatus("Sign-in failed. Tap Retry.");
                 bindButtons();
@@ -768,14 +808,9 @@ public final class Raspberry {
         }
         close(socket);
         socket = null;
-        clearSecrets(gen);
         liveGen = 0;
-    }
-
-    private static void clearSecrets(int gen) {
-        if (gen == 0 || gen == liveGen || !attempt.live(gen)) {
-            pkce = null;
-        }
+        attemptActivity = null;
+        cancelled = false;
     }
 
     private static void setStatus(final String text) {

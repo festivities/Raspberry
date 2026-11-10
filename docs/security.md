@@ -13,6 +13,10 @@ Raspberry patches a player's own, hash-checked LINE PLAY 10.1.0.0 APK. It does n
 
 These are acceptance requirements, not a claim that unfinished components have passed testing. See `.agents/PLAN.md` for implementation status.
 
+The current `--dev-pin-sha256` implementation is an **additional** leaf-certificate check after platform trust, scoped to Java endpoint requests. It does not yet provide the planned self-signed lab mode and cannot change Chrome, Custom Tabs or WebView trust. Those browsers still require a trusted endpoint certificate; do not bypass their certificate warnings to claim sign-in or web acceptance.
+
+Stored authorization is bound to the descriptor's canonical HTTPS origin. Changing that origin, or finding an older unbound marker, requires fresh SSO rather than sending the saved code to another operator. Fresh SSO removes only the old `files/avcookie.na` game-session credential before saving the new authorization; failure to remove it stops authorization. Accounts, downloaded assets and other preferences are not deleted. Ordinary same-origin relaunch preserves the session.
+
 ## Inherited native-transport limit
 
 Static analysis recorded in `.agents/AGENTS.md` shows that the stock native libcurl stack disables certificate and hostname verification. Preserving original Host/SNI while redirecting sockets **does not fix that**. Native game credentials and session traffic remain vulnerable to an active network attacker. Plain HTTP and the game's legacy socket protocols are not authenticated HTTPS either.

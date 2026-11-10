@@ -79,6 +79,49 @@ func TestPasswordFileOneLine(t *testing.T) {
 	}
 }
 
+func TestPublish(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(src, []byte("apk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publish(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(src); !os.IsNotExist(err) {
+		t.Fatal("source name remains")
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "apk" {
+		t.Fatalf("dst %q %v", b, err)
+	}
+
+	src = filepath.Join(dir, "src2")
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publish(src, dst); !errors.Is(err, ErrExists) {
+		t.Fatalf("exists: %v", err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "apk" {
+		t.Fatalf("dst replaced: %q", b)
+	}
+	if b, err := os.ReadFile(src); err != nil || string(b) != "new" {
+		t.Fatalf("source not preserved: %q %v", b, err)
+	}
+
+	blocker := filepath.Join(dir, "notdir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publish(src, filepath.Join(blocker, "out")); err == nil {
+		t.Fatal("link failure published")
+	}
+	if b, err := os.ReadFile(src); err != nil || string(b) != "new" {
+		t.Fatalf("link failure moved source: %q %v", b, err)
+	}
+}
+
 func TestUnixOwnerOnlyBits(t *testing.T) {
 	if !unixOwnerOnly(0o600, false) || !unixOwnerOnly(0o700, true) {
 		t.Fatal("expected owner-only modes")

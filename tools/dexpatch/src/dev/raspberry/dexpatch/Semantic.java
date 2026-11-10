@@ -11,9 +11,15 @@ import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstructio
 import com.android.tools.smali.dexlib2.iface.instruction.OffsetInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction;
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction;
+import com.android.tools.smali.dexlib2.iface.instruction.SwitchElement;
+import com.android.tools.smali.dexlib2.iface.instruction.SwitchPayload;
 import com.android.tools.smali.dexlib2.iface.instruction.ThreeRegisterInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction;
+import com.android.tools.smali.dexlib2.iface.instruction.WideLiteralInstruction;
+import com.android.tools.smali.dexlib2.iface.instruction.formats.ArrayPayload;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,15 +46,23 @@ final class Semantic {
             insns.add(insn);
         }
         Map<Integer, Integer> addrToIndex = new HashMap<>();
+        Map<Integer, Integer> payloadSwitch = new HashMap<>();
         int addr = 0;
         for (int i = 0; i < insns.size(); i++) {
             addrToIndex.put(addr, i);
-            addr += insns.get(i).getCodeUnits();
+            Instruction insn = insns.get(i);
+            if (insn instanceof OffsetInstruction oi && isPayloadRef(insn.getOpcode())) {
+                payloadSwitch.put(addr + oi.getCodeOffset(), addr);
+            }
+            addr += insn.getCodeUnits();
         }
+        int codeUnits = addr;
+        // A try that runs to the end has no instruction at that address. Index it past the last one.
+        addrToIndex.put(codeUnits, insns.size());
         List<String> rows = new ArrayList<>();
         addr = 0;
         for (Instruction insn : insns) {
-            rows.add(row(insn, addr, addrToIndex));
+            rows.add(row(insn, addr, addrToIndex, payloadSwitch));
             addr += insn.getCodeUnits();
         }
         for (TryBlock<? extends ExceptionHandler> tb : impl.getTryBlocks()) {
@@ -59,21 +73,42 @@ final class Semantic {
                 rows.add("try " + start + ".." + end + " -> " + h.getExceptionType() + "@" + handler);
             }
         }
+        rows.add("regs " + impl.getRegisterCount());
         return rows;
     }
 
-    private static String row(Instruction insn, int addr, Map<Integer, Integer> addrToIndex) {
+    private static boolean isPayloadRef(Opcode op) {
+        return op == Opcode.PACKED_SWITCH || op == Opcode.SPARSE_SWITCH || op == Opcode.FILL_ARRAY_DATA;
+    }
+
+    private static String row(Instruction insn, int addr, Map<Integer, Integer> addrToIndex, Map<Integer, Integer> payloadSwitch) {
         StringBuilder sb = new StringBuilder();
         sb.append(norm(insn.getOpcode()));
         if (insn instanceof ReferenceInstruction ri) {
             sb.append(" ref=").append(Refs.refText(ri.getReference()));
         }
-        if (insn instanceof NarrowLiteralInstruction li) {
+        if (insn instanceof WideLiteralInstruction wi) {
+            sb.append(" wide=").append(wi.getWideLiteral());
+        } else if (insn instanceof NarrowLiteralInstruction li) {
             sb.append(" lit=").append(li.getNarrowLiteral());
         }
         if (insn instanceof OffsetInstruction oi) {
             int target = addr + oi.getCodeOffset();
             sb.append(" ->").append(indexAt(addrToIndex, target));
+        }
+        if (insn instanceof SwitchPayload sp) {
+            Integer switchAddr = payloadSwitch.get(addr);
+            sb.append(" cases=");
+            for (SwitchElement el : sp.getSwitchElements()) {
+                int target = switchAddr == null ? -1 : indexAt(addrToIndex, switchAddr + el.getOffset());
+                sb.append(el.getKey()).append(':').append(target).append(',');
+            }
+        }
+        if (insn instanceof ArrayPayload ap) {
+            sb.append(" w=").append(ap.getElementWidth()).append(" data=");
+            for (Number n : ap.getArrayElements()) {
+                sb.append(n.longValue()).append(',');
+            }
         }
         if (insn instanceof FiveRegisterInstruction fi && fi.getRegisterCount() > 0) {
             sb.append(" n=").append(fi.getRegisterCount())
@@ -88,6 +123,9 @@ final class Semantic {
             sb.append(" a=").append(ti.getRegisterA()).append(" b=").append(ti.getRegisterB());
         } else if (insn instanceof OneRegisterInstruction ti) {
             sb.append(" a=").append(ti.getRegisterA());
+        }
+        if (insn instanceof RegisterRangeInstruction rr) {
+            sb.append(" range=").append(rr.getStartRegister()).append(',').append(rr.getRegisterCount());
         }
         return sb.toString();
     }

@@ -137,73 +137,19 @@ public final class Main {
         };
     }
 
+    /** Full expected body, not a substring. Width aliases are already folded by Semantic.rows. */
     static void checkEdited(Method orig, Method patched) {
         String key = Semantic.key(orig);
-        List<String> rows = Semantic.rows(patched.getImplementation());
-        String joined = String.join("\n", rows);
-        switch (key) {
-            case "Ljp/naver/lineplay/login/LoginAdapter;->InfoDeviceUUID()Ljava/lang/String;" -> {
-                require(joined.contains("INVOKE_STATIC ref=Ljp/naver/lineplay/android/LineplayApplication;->getContext()Landroid/content/Context;"), key);
-                require(joined.contains("INVOKE_STATIC ref=" + Refs.HELPER + "->deviceUuid(Landroid/content/Context;)Ljava/lang/String;"), key);
-                require(!joined.contains("ANDROID") && !joined.contains("Settings$Secure"), key);
-            }
-            case "Ljp/naver/lineplay/android/LinePlay$5;->run()V" -> {
-                require(joined.contains(Refs.HELPER + "->beforeNative(Landroid/app/Activity;)Z"), key);
-                require(joined.contains(Refs.HELPER + "->afterGameLoad(Landroid/app/Activity;)V"), key);
-                require(joined.contains("Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z"), key);
-                require(joined.contains("Ljava/lang/System;->load(Ljava/lang/String;)V"), key);
-                require(joined.contains("Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V"), key);
-                require(joined.contains("cusCocosInit"), key);
-                require(joined.contains("Ljava/lang/Throwable;@"), key);
-            }
-            case "Ljp/naver/lineplay/android/LinePlay;->onActivityResult(IILandroid/content/Intent;)V" -> {
-                int at = Edits.requestCompareIndex(orig, orig.getImplementation(), 20000);
-                String before = Semantic.rows(orig.getImplementation()).get(at);
-                require(rows.get(at).startsWith("GOTO"), key);
-                require(branchTarget(rows.get(at)).equals(branchTarget(before)), key);
-                require(!rows.get(at).contains("IF_NE"), key);
-            }
-            case "Ljp/naver/lineplay/login/LoginAdapter;->LoginAppToApp()V",
-                    "Ljp/naver/lineplay/login/LoginAdapter;->LoginWeb()V",
-                    "Lcom/nhnarts/message/PfHandler;->LoginAppToAppMessage(Landroid/os/Message;)V",
-                    "Lcom/nhnarts/message/PfHandler;->LoginWebMessage(Landroid/os/Message;)V",
-                    "Lcom/nhnarts/message/PfHandler;->LoginBandMessage(Landroid/os/Message;)V",
-                    "Lcom/nhnarts/message/PfHandler;->LoginNaverId(Landroid/os/Message;)V",
-                    "Ljp/naver/lineplay/android/LinePlay;->grantedFacebookJNI()V" -> {
-                require(rows.get(0).startsWith("RETURN_VOID"), key);
-                require(rows.size() == 1, key);
-            }
-            case "Ljp/naver/lineplay/android/LinePlay;->updateURLFromUiThread(Ljava/lang/String;)V",
-                    "Ljp/naver/lineplay/android/LinePlay;->updateURLSubWebViewFromUiThread(Ljava/lang/String;)V",
-                    "Ljp/naver/lineplay/android/LinePlay;->openWebBrowserInGLThread(Ljava/lang/String;)V",
-                    "Ljp/naver/common/android/notice/util/LanLinkUtil;->setCookieNLoadUrl(Landroid/webkit/WebView;Ljava/lang/String;)V" ->
-                    checkPrefix(orig, rows, Edits.stringParamIndex(key));
-            default -> throw new IllegalStateException("not an edit " + key);
+        MethodImplementation expected;
+        try {
+            expected = Edits.edit(orig);
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException("edit check failed " + key);
         }
-    }
-
-    static void checkPrefix(Method orig, List<String> rows, int paramIndex) {
-        String key = Semantic.key(orig);
-        int reg = Edits.paramRegister(orig, orig.getImplementation(), paramIndex);
-        require(rows.get(0).contains(Refs.HELPER + "->rewrite(Ljava/lang/String;)Ljava/lang/String;"), key);
-        require(rows.get(0).contains("n=1:" + reg + ","), key);
-        require(("MOVE_RESULT_OBJECT a=" + reg).equals(rows.get(1)), key);
-    }
-
-    static String branchTarget(String row) {
-        int at = row.indexOf("->");
-        if (at < 0) {
-            return "";
+        if (expected == null) {
+            throw new IllegalStateException("not an edit " + key);
         }
-        int end = at + 2;
-        while (end < row.length() && (Character.isDigit(row.charAt(end)) || row.charAt(end) == '-')) {
-            end++;
-        }
-        return row.substring(at, end);
-    }
-
-    static void require(boolean ok, String key) {
-        if (!ok) {
+        if (!Semantic.rows(expected).equals(Semantic.rows(patched.getImplementation()))) {
             throw new IllegalStateException("edit check failed " + key);
         }
     }
