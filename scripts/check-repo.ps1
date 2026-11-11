@@ -1,4 +1,4 @@
-# Fail if the git index holds APK-derived files, keys, private config, raw logs,
+# Fail if the git index holds APK/IPA-derived files, keys, private config, raw logs,
 # compiled downloads, a .venv, or oversized blobs.
 # Tracked paths only (git ls-files). Untracked work is ignored.
 # No size exemption: a tiny testdata/*.so is still forbidden.
@@ -20,7 +20,8 @@ if ($LASTEXITCODE -ne 0) {
 
 $maxBytes = 1MB
 $bannedExt = @(
-    '.apk', '.xapk', '.apks', '.aab', '.dex', '.odex', '.vdex', '.oat', '.art', '.so', '.smali',
+    '.apk', '.xapk', '.apks', '.aab', '.ipa', '.dex', '.odex', '.vdex', '.oat', '.art', '.so', '.dylib', '.smali',
+    '.mobileprovision', '.provisionprofile',
     '.i64', '.idb', '.id0', '.id1', '.id2', '.nam', '.til',
     '.keystore', '.jks', '.p12', '.pfx', '.pem', '.key', '.secret',
     '.log', '.pcap', '.pcapng', '.cap', '.har',
@@ -32,6 +33,7 @@ function Test-ForbiddenPath([string]$path) {
     if ($p -match '(^|/)(assets|res|smali)(/|$)') { return $true }
     if ($p -match '(^|/)smali_classes[0-9]+(/|$)') { return $true }
     if ($p -match '(^|/)lib/(arm64-v8a|armeabi-v7a|armeabi|x86_64|x86)(/|$)') { return $true }
+    if ($p -match '(^|/)[^/]*\.app(/|$)' -or $p -match '(^|/)payload(/|$)') { return $true }
     if ($p -match '(^|/)(resources\.arsc|androidmanifest\.xml|classes[0-9]*\.dex)$') { return $true }
     if ($p -match '^(work|build|out|dist|local|\.opencode)(/|$)') { return $true }
     if ($p -match '(^|/)\.venv(/|$)') { return $true }

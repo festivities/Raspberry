@@ -1,8 +1,8 @@
-# Raspberry patches a player's OWN copy of LINE PLAY. Nothing derived from that APK may ever be committed,
+# Raspberry patches a player's OWN copy of LINE PLAY. Nothing derived from an APK/IPA may ever be committed,
 # and neither may signing keys or an operator's private values. This file is a safety net, not the rule:
 # check `git status` and `git diff --cached --stat` before every commit (.agents/AGENTS.md "Policies").
 
-# Scratch folders: everything derived from an APK (unpacked entries, decoded smali, patched libs, outputs) lives here only.
+# Scratch folders: APK/IPA-derived material lives here or in the approved private temp directory only.
 /work/
 /build/
 /out/
@@ -21,6 +21,10 @@
 *.oat
 *.art
 *.so
+*.ipa
+*.dylib
+*.app/
+Payload/
 *.i64
 *.idb
 *.id0
@@ -37,6 +41,8 @@
 *.pem
 *.key
 *.secret
+*.mobileprovision
+*.provisionprofile
 secrets/
 .env
 .env.*

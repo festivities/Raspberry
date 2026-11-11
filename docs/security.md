@@ -2,6 +2,8 @@
 
 Raspberry patches a player's own, hash-checked LINE PLAY 10.1.0.0 APK. It does not distribute the game, store Discord passwords or embed an operator's secrets. The endpoint is operator configuration, not a secret.
 
+The iOS 10.1.0 IPA is under static assessment only; it is not supported by the patcher. Its AirArmor-related signature/debugger checks have been located, but weaker enforcement, a safe compatibility patch and its native TLS policy are not established. See [ios.md](ios.md); do not transfer Android's findings to iOS by assumption.
+
 ## Required checks
 
 - Redirect only the documented game-host allowlist. Unrelated traffic must remain unchanged even when it shares an IP address with the endpoint. Endpoint failures must not fall back to LINE's hosts.

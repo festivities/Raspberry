@@ -6,34 +6,42 @@ Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab fa
 
 When the user says they are **moving to another conversation whose agent has no context at all**, the outgoing agent MUST record it here as **HANDOFF INITIATED** with a self-sufficient state snapshot, and the receiving agent MUST append **HANDOFF ACCEPTED** (dated, with any state corrections) once it has loaded context. Older INITIATED/ACCEPTED pairs move to HISTORY.md once accepted. Tell the user before writing a handoff so they can change the effort level.
 
-### HANDOFF INITIATED — 2026-11-10 (user requested stop)
+### HANDOFF INITIATED — 2026-11-12 (user requested context handoff)
 
-You are the receiving agent with no context. Read, in order: all of [AGENTS.md](AGENTS.md), this file, [CONTRACT.md](CONTRACT.md), then Cherry's server contract (read-only), then `docs/build.md`, `docs/patches.md`, `docs/security.md` and `docs/usage.md`. HISTORY is dated evidence and does not override this block. Do not edit Cherry's repo, archives, services, data or AVDs.
+Receiving agent: read all of `AGENTS.md`, this checkpoint and the accepted snapshot below, `CONTRACT.md`, then `docs/{ios,patches,security,build,usage}.md`. Read Cherry's `.agents/CONTRACT.md` read-only for newer replies. Append HANDOFF ACCEPTED after loading context; preserve superseded handoff pairs in HISTORY.
 
-**Stopped.** The user stopped all implementation and device work for this handoff. No tester is running. The app `jp.naver.lineplay.android` was left force-stopped. No preference fixture is applied and no emulator capture was left running. The owned stub was not stopped; reverify it before use and do not assume its old PID is alive.
+**Work stopped for handoff.** No subagent or UI test is still running. The last verified Android state is the restored Discord gate on AVD Raspberry (`emulator-5559`, 1290×2796), with Phone permission denied and no synthetic fixture active. No app force-stop, emulator stop or stub shutdown was performed for this handoff; reverify their current identities/state before use. No capture was started by this slice. Do not touch Cherry/Jerry, the shared adb server, either archive, or Cherry's live services/data.
 
-**Repo.** `main` includes pushed `24fbf88` (`feat: integrate deterministic APK patching`). This handoff commit pins the emulator console port and records this snapshot. Legacy `.claude/`, root `AGENTS.md` and root `CLAUDE.md` stay untouched.
+**Repo/delivery:** this handoff includes the completed static iOS assessment, partial Android routing evidence and iOS artifact-hygiene guards; it does not change the APK patch implementation or implement IPA patching. User explicitly requested commit/push if green. The incoming HEAD should be the handoff commit after `ec03477`; verify `git status`, `git log -1` and remote tracking rather than assuming delivery succeeded from this pre-commit text. The accepted snapshot's "no commit/push" statement describes its earlier checkpoint, not this delivery request.
 
-**Lab port (user, 2026-11-10).** Raspberry's emulator console port is permanently **5559**. `scripts/start-emulator-raspberry.bat` starts it with `-port 5559`, `-gpu swiftshader_indirect -no-snapshot-load`, and no DNS sink. After a start from that script, the adb serial is `emulator-5559`. The process verified earlier this session was still `emulator-5554` = AVD Raspberry, Android 17/API 37, x86_64 + arm64-v8a, **1290×2796**, because it was started before the pin. Do not restart or kill it just to change ports. Before every device action, `adb devices -l` then `adb -s <serial> emu avd name` must print `Raspberry`. Cherry and Jerry are off-limits even if a serial matches an old note. Do not grant the phone permission.
+**Results and limits:** iOS has Android's same abnormal-state set and an `[AA-006]` message path; no weaker-AirArmor conclusion, safe iOS patch or runtime acceptance is established. Android wrong-origin rejection passes; one native HTTPS request reaches the private stub with original Host/SNI. Startup is blocked by the stock Phone-permission requirement after denial. Preferences were restored with matching hash/owner/group/mode/SELinux metadata (mtime changed), and main verified screenshots/logs. Full OAuth, Garden, WebView, ten-minute compatibility, four-transport and DNS-leak acceptance remain open.
 
-**Verified, not a finished release.**
+**Resume in this order:**
+1. Reverify repo, Raspberry AVD identity and only the owned private stub. Do not recreate helpers or change permission/trust policies to get a green test.
+2. Classify the stock Phone-permission dependency statically. Keep Phone denied; do not silently add a new permission bypass. Report any scope decision requiring the user.
+3. Coordinate through this repo's CONTRACT for an isolated browser-trusted Cherry peer. Cherry's ongoing refactor belongs to its separate Claude Code session; its configurable listeners/`dev-fake`/discovery are server-reported available, not our end-to-end acceptance.
+4. Keep iOS static-only until Mac/device access exists. `docs/ios.md` lists Xcode/signing prerequisites and PlayCover's smoke-only limitations. Further static investigation can trace the final generic-message handler, but do not invent a byte patch from matching state numbers.
 
-- [V host] Before `24fbf88`: Go/native gate, Android core tests, DEX self-test, both-ABI native builds and `go test -race ./...` passed. `raspberry patch` and `keygen` are implemented. Signing fails closed if hard-link publication cannot be used. Stored authorization requires the Discord marker, a valid UUID and `raspberry.discord.origin` equal to `https://` plus the descriptor's canonical HTTPS authority (omit port 443). Fresh SSO clears only `files/avcookie.na` before saving the new authorization; same-origin relaunch keeps it. Callback reads recheck the attempt before each read; one in-flight read may still use its existing 5-second timeout.
-- [V packaging] Private combined signed reruns were byte-identical: exactly 3 replacements and 4 additions, one byte per native compatibility edit, no development pin, retained compressed payloads unchanged. The latest pair is `combined-327a93ebc60f424ebe9143f5db0e25fb`, named by `combined-latest-private.json`, under `%TEMP%\opencode\raspberry\continuation-20261110\`. Not in Git.
-- [V device] Same-signer install on Raspberry. The Discord gate appears even when a stock UUID exists without our marker. Chrome rejects the self-signed stub with `NET::ERR_CERT_AUTHORITY_INVALID`; no bypass. Live cancellation stays on "Cancelled. Tap Discord to try again." with Retry disabled, including a later refresh; a new Discord tap clears it. Exit/relaunch returns to the initial gate and the marker stays absent. Main spot-checked those screenshots. The endpoint-bound package also installed and showed the initial gate.
+**Private evidence/tools:** `%TEMP%\opencode\raspberry\ios-airarmor-20261112\ios-airarmor.md` and `ida-evidence.txt` (raw consumer/predicate evidence lines 1335–1632); `%TEMP%\opencode\raspberry\routing-20261112\routing-result.md`, screenshots, preference backup and bounded ADB helpers; earlier combined signed APK/fixture pointers remain under `continuation-20261110\`. The array-free wrapper is `routing-20261112\scripts\invoke-raspberry-adb.ps1`; read its README and use quoted `"-"` for its default-output sentinel. Capture outputs privately. Keys remain outside Git. An accidental one-file repo extraction was contained in private scratch, source/scratch IPA hashes reverified and repo `Payload` absence checked; no derived material is included in this commit.
 
-**Not accepted.** Wrong-origin rejection and matched-origin native routing were not completed. The first wrong-origin run stopped on an empty activity filter without a screenshot; that is not a crash and not a pass. Preferences were restored to the backup hash, owner/group `10236:10236`, mode `660`, and the recorded SELinux label. The rerun was stopped before either fixture was applied; live preferences were not changed. No Garden, real Discord OAuth2 exchange, WebView, session, gateway or DNS-leak acceptance exists. Discord OAuth means OAuth2 SSO mediated by Cherry: browser sign-in, PKCE and state, a short-lived ticket, then `uniqueCode`. No Discord password or client secret is stored in the APK. Guest auto-entry is only the private static candidate `guest-entry-spec.md`; do not implement it until a real peer shows the scene. Native curl TLS verification remains disabled by the stock client.
+**Verification [V, handoff rerun]:** full Go/native/repository gate, `go test -race -count=1 ./...`, Android core tests, DEX selftest and both native ABI builds passed. Java emitted only obsolete source/target-8 warnings. Review/check the final staged index before commit; these are host gates, not completed game acceptance.
 
-**Private scratch.** `%TEMP%\opencode\raspberry\continuation-20261110\` holds the APKs, stub config/logs, evidence screenshots and `prepare-routing-fixture.py`. That script was reviewed and its `--selftest` passed. Invoke it as a file; never `python -c` (the shell scanner rejects inline dynamic execution). Keys stay in `%LOCALAPPDATA%\Raspberry\keys\`. None of this belongs in Git.
+### HANDOFF ACCEPTED — 2026-11-12 (OpenCode Raspberry session)
 
-**Next, in order.**
+The accepted November 10 handoff and chronological continuation notes are preserved verbatim in HISTORY. Current checkpoint:
 
-1. Reverify the AVD by name. Do not restart Raspberry only to move it to port 5559.
-2. Reverify the Raspberry stub, or restart only that stub. Never start or reconfigure Cherry.
-3. Finish the synthetic rooted routing check in `routing-device-brief.md`: a wrong origin must stay on the Discord gate; the matched origin may reach native startup. Screenshot every result, even if `dumpsys` is empty. Restore the original preferences afterward. This is not OAuth acceptance.
-4. Full login, Garden, WebView and four-transport acceptance waits for Cherry's configurable isolated peer and a browser-trusted certificate. Do not bypass a TLS warning or use the lab instance unless the user explicitly says so.
+- **Scope/ownership:** user authorizes static assessment of the supplied decrypted iOS IPA; no iOS runtime exists yet. Cherry's refactor remains active in a separate Claude Code session. Its repo, data, services and Cherry/Jerry AVDs were not modified.
+- **Repo:** started clean at `ec03477`; this slice changes documentation and iOS artifact-hygiene guards, not the APK patch implementation. No commit/push was made.
+- **Host checks:** full Go/native/repository gate, uncached Go race tests, Android core tests, DEX selftest and both-ABI native builds passed. Added mixed-case/nested index regressions for IPA/dylib/app bundles/Payload/provisioning profiles pass.
+- **iOS static slice complete [S]:** baseline and results in `docs/ios.md`; private report/evidence under `%TEMP%\opencode\raspberry\ios-airarmor-20261112\`. Event 6 reaches an app callback, an abnormal-state latch and an `[AA-006]` generic-message submission. Raw IDA predicates confirm Android's same abnormal set {1,4,5,6,9,10}; state 0 and values above 10 are normal. Re-sign triggering, final message/blocking effect, signing/installability and actual network/login/WebView paths remain unresolved. No iOS byte patch or weaker-security conclusion is justified. No iOS binary was patched or run.
+- **Android lab [V]:** explicit-serial preflight verified `emulator-5559` = Raspberry, 1290×2796. Installed package version is 10.1.0.0; packaged descriptor matches the private owned stub, no app-private descriptor override. Stub process/listeners match its private config.
+- **Synthetic Android result [V partial]:** wrong-origin fixture stayed behind the Discord gate and added no stub requests. Matched origin loaded both game/routing libraries and sent native HTTPS `GET /v4/setting/goodbye/cherry` with original Host/SNI `fapi.play.naver.jp`, status 501. Expected `/v4/setInitConf` was not observed. Gateway accept/close events prove neither a handshake nor four-transport coverage.
+- **Current Android blocker/state:** after Phone permission was denied, the stock client demanded Phone access and showed FINISH/SETTING. No grant or permission workaround was applied. Tester restored original preferences with matching SHA-256 and owner/group/mode/SELinux metadata, removed its staging directory, and relaunched to the Discord gate. Main spot-checked wrong-origin, permission-error and restored-gate screenshots. Phone remains denied; no fixture is left active.
+- **Main evidence verification:** independently checked native request log, both library maps, original-backup SHA-256 against post-restore device hash, and matching owner/group/mode/SELinux metadata (mtime changed during restoration). Private `routing-20261112\routing-result.md` indexes the exact evidence; no raw data or credentials were copied into Git.
+- **Private tools/evidence:** `%TEMP%\opencode\raspberry\routing-20261112\` holds screenshots/logs and main-reviewed `scripts\raspberry-adb.ps1` plus array-free `scripts\invoke-raspberry-adb.ps1`. Use explicit-serial bounded ADB only; no implicit-selection Android MCP. The helper guards can reject `logcat -d`; do not bypass ownership checks to collect logs.
+- **Server coordination:** Cherry reports configurable isolated listeners, `dev-fake` auth and discovery implemented (November 11 contract replies); browser-trusted TLS is still outstanding. Contract reconciliation and shared-auth acceptance are incomplete. Do not build from the other session's changing tree or operate its lab service.
 
-The earlier same-day quota interruption, red gate and partial-edit notes are historical and are in HISTORY. They are finished, not the current tree.
+**Next:** classify the Phone-permission dependency without granting it or silently adding a new bypass; obtain an isolated browser-trusted Cherry peer for real auth/game/web acceptance. Keep iOS static results separate from future Mac/PlayCover/device acceptance. OAuth, Garden, WebView, a 10-minute compatibility session, four transports and no-DNS-leak acceptance remain open.
 
 **Tasks, in order (fix or classify each gap with evidence; tag every claim [S]/[V]/[I]/[?]):**
 
@@ -90,21 +98,22 @@ The earlier same-day quota interruption, red gate and partial-edit notes are his
 
 **Tests.** Host unit tests for pure logic (descriptor parsing, host matching, port map, PKCE, patch application on synthetic binaries and a synthetic tiny APK); golden test of the patcher on the synthetic APK (byte-identical rerun); stub-server device tests through the `tester` agent; a final run against the lab Cherry (default ports at `10.0.2.2`) and then the user's production endpoint.
 
-## Status (2026-11-10)
+## Status (2026-11-12)
 
 | Item | State |
 | --- | --- |
-| Context and lab handoff | HANDOFF INITIATED 2026-11-10; not yet accepted |
+| Context and lab handoff | HANDOFF INITIATED 2026-11-12; incoming acceptance pending; Raspberry last verified at emulator-5559 |
 | Repo skeleton, gate, `check-repo` | implemented and tested |
 | Toolchain installed and recorded | installed; versions/pins in docs/build.md |
 | S1 static spike | private specs complete; public conclusions in docs/patches.md |
 | Isolated protocol stub | implemented and race-tested; not a game emulator |
-| R1 endpoint routing | library implemented; wrong-origin and native routing stopped before evidence |
+| R1 endpoint routing | wrong-origin gate passes; one mapped native HTTPS request; startup blocked by denied Phone permission; four-transport/DNS acceptance open |
 | R2 repackaged-client compatibility | tables implemented; combined package reaches the Discord gate; no 10-minute session |
 | R3 WebView rewrite | Java helper implemented; insertion proof and device acceptance pending |
 | R4 Discord sign-in (client) | pre-auth, cancellation and Exit/relaunch pass; real OAuth and guest auto-entry pending |
 | R5 patcher CLI | unified command/keygen and usage docs implemented; signed reruns byte-identical; pre-auth install passes |
 | R6 production end-to-end | not started |
+| iOS compatibility / AirArmor | bounded static assessment complete: same abnormal-state set, final message/re-sign effect unknown; no iOS runtime; CLI Android-only |
 
 ## Roadmap
 

@@ -41,6 +41,12 @@ try {
     }
 
     Assert-Reject 'testdata/x.so' 'not-a-real-lib' 0
+    Assert-Reject 'testdata/tiny.IPA' 'synthetic' 0
+    Assert-Reject 'testdata/tiny.DyLiB' 'synthetic' 0
+    Assert-Reject 'nested/Foo.ApP/Contents/MacOS/executable' 'synthetic' 0
+    Assert-Reject 'nested/pAyLoAd/executable' 'synthetic' 0
+    Assert-Reject 'profiles/operator.MoBiLePrOvIsIoN' 'synthetic' 0
+    Assert-Reject 'profiles/operator.PrOvIsIoNpRoFiLe' 'synthetic' 0
     Assert-Reject '.venv/x.py' 'print(1)' 0
     Assert-Reject 'device.key' 'not-a-real-key' 0
     Assert-Reject 'oversizedfile' '' (1MB + 1)
