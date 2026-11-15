@@ -25,6 +25,23 @@ Re-signing removes obsolete upstream JAR/APK signatures and replaces them with t
 
 **Risk:** the packed companion library may perform additional file checks. A static byte change alone does not prove successful startup or identify the callback a re-signed APK will actually produce.
 
+## Scene-ready guest transport after Discord
+
+`NaLoginLayer::SetEndLoading` normally reveals login buttons on its eligible no-cookie/non-COPPA tail. The patch retargets only that tail to `NaStandAloneLoginPopup::createGuestAccount`, the operation used by the popup's Start as Guest action (tag 13). It reads the existing `InfoDeviceUUID` and uses the stock guest-token/session callbacks. Provider `LD_GUEST` (tag 17) is a separate message path and is not substituted.
+
+| ABI | File offset | Expected → replacement | Guest target |
+| --- | --- | --- | --- |
+| arm64-v8a | `0x1ceef0c` | `97e8fe17` → `70f2fe17` | `0x1cab8cc` |
+| armeabi-v7a | `0x127a930` | `e9f792bc` → `eaf74cbe` | `0x12655cc` |
+
+The original tail's frame restoration and cookie-check branch are guard windows in the existing native tables. The compatibility edit remains one byte per ABI; each table has two edits in total. Hash/expected-byte checks, original/replacement branch-destination tests and synthetic exact-change-boundary tests cover both builds.
+
+The pre-engine Discord gate, origin-bound UUID replacement, cookie-present `CheckAutoLogin`, preceding COPPA/GDPR decisions, request/session fields and response/error callbacks remain byte-identical. The eligible tail initiates guest transport instead of revealing the buttons; it does not change legal-consent state. No timer or automatic retry loop is added. The stock guest-error dialog is retained; post-error recovery is not yet device-verified and may require relaunching.
+
+An earlier popup-only interception passed static checks but left the settled login page visible; the installed bytes were independently verified. Those failed edits were removed entirely, not combined with this trigger. The screenshot's precise Cocos creator is not inferred solely from a matching resource name.
+
+**Verification:** static scene/cookie/restore evidence, both-ABI branch tests, full host gate/race tests and deterministic signed reruns pass. [V, 2026-11-16] On Raspberry's Android 17 arm64-translated run, the update automatically reached START!/CREATE onboarding without login-button input, a native session cookie appeared, and one relaunch returned to onboarding without SSO, stock login or closure prompts. Main checked both screenshots, unchanged Discord authorization and notice-origin binding, cookie existence/metadata and empty captured crash buffers. CREATE was not tapped. Exact guest/session request counts, all consent states, failed-guest recovery, ARMv7 runtime and full avatar/gameplay acceptance remain unverified.
+
 ## Endpoint routing
 
 Own code: `libraspberry.so`, loaded after `libgame` and before the Cocos renderer initializes. Patch only libgame's GOT slots for `getaddrinfo`, `gethostbyname`, `connect` and `sendto`; do not hook protection, browser or LINE-encryption libraries.

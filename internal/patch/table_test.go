@@ -17,10 +17,10 @@ func TestLockedTables(t *testing.T) {
 	if arm64.ID != "airarmor-state6-arm64" || arm64.SHA256 != LibgameArm64SHA {
 		t.Fatalf("arm64 id/hash %s %s", arm64.ID, arm64.SHA256)
 	}
-	if len(arm64.Edits) != 1 || arm64.Edits[0].Offset != 0x2f98021 {
-		t.Fatalf("arm64 edit %+v", arm64.Edits)
+	if len(arm64.Edits) != 2 || arm64.Edits[1].Offset != 0x2f98021 {
+		t.Fatalf("arm64 edits %+v", arm64.Edits)
 	}
-	if !bytes.Equal(arm64.Edits[0].Expected, []byte{0x00}) || !bytes.Equal(arm64.Edits[0].Replacement, []byte{0xf8}) {
+	if !bytes.Equal(arm64.Edits[1].Expected, []byte{0x00}) || !bytes.Equal(arm64.Edits[1].Replacement, []byte{0xf8}) {
 		t.Fatalf("arm64 bytes")
 	}
 
@@ -28,14 +28,14 @@ func TestLockedTables(t *testing.T) {
 	if armv7.ID != "airarmor-state6-armv7" || armv7.SHA256 != LibgameArmv7SHA {
 		t.Fatalf("armv7 id/hash %s %s", armv7.ID, armv7.SHA256)
 	}
-	if len(armv7.Edits) != 1 || armv7.Edits[0].Offset != 0x13dc502 {
-		t.Fatalf("armv7 edit %+v", armv7.Edits)
+	if len(armv7.Edits) != 2 || armv7.Edits[1].Offset != 0x13dc502 {
+		t.Fatalf("armv7 edits %+v", armv7.Edits)
 	}
-	if !bytes.Equal(armv7.Edits[0].Expected, []byte{0x39}) || !bytes.Equal(armv7.Edits[0].Replacement, []byte{0x19}) {
+	if !bytes.Equal(armv7.Edits[1].Expected, []byte{0x39}) || !bytes.Equal(armv7.Edits[1].Replacement, []byte{0x19}) {
 		t.Fatalf("armv7 bytes")
 	}
-	if len(armv7.Windows) != 1 || armv7.Windows[0].Offset != 0x13dc500 || !bytes.Equal(armv7.Windows[0].Expected, []byte{0x40, 0xf2, 0x39, 0x33}) {
-		t.Fatalf("armv7 window %+v", armv7.Windows)
+	if len(armv7.Windows) != 3 || armv7.Windows[2].Offset != 0x13dc500 || !bytes.Equal(armv7.Windows[2].Expected, []byte{0x40, 0xf2, 0x39, 0x33}) {
+		t.Fatalf("armv7 windows %+v", armv7.Windows)
 	}
 }
 

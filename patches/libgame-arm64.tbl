@@ -1,5 +1,10 @@
-# AirArmor state 6 only. Offsets are uncompressed ELF file offsets, not APK zip offsets.
-# Jump-table byte for state 6. 00 branches to the abnormal return; f8 branches to the normal return.
+# AirArmor state 6 only, plus no-cookie scene-ready guest auto-entry.
+# Tail replacement invokes the stock createGuestAccount action used by popup tag 13; it does not retarget provider LD_GUEST/tag 17.
+# Cookie and restore windows guard the existing relaunch path and frame recovery.
+# Offsets are uncompressed ELF file offsets, not APK zip offsets.
 id airarmor-state6-arm64
 sha256 d824c3ef72ac1948f3c5a31619879384f4659c9306e6f5a1b04793334e795b04
+window 0x1ceee3c 20030034
+window 0x1ceef00 f35341a9f55b42a9fd7bc3a8
+edit 0x1ceef0c 97e8fe17 70f2fe17 no-cookie non-COPPA SetEndLoading tail to createGuestAccount (popup tag 13)
 edit 0x2f98021 00 f8 state-6 jump-table byte
