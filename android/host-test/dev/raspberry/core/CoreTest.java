@@ -4,7 +4,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 public final class CoreTest {
     private static int fails;
@@ -23,6 +27,8 @@ public final class CoreTest {
         attemptCompletion();
         pendingExchange();
         rewrite();
+        noticeRewrite();
+        noticeMigration();
         descriptor();
         turkishLocale();
         pin();
@@ -341,6 +347,206 @@ public final class CoreTest {
         check(WebRewrite.rewrite("https://event.play.naver.jp:65535/a%2F?q=1%20#f", d).equals("https://ep.example/a%2F?q=1%20#f"), "port-65535");
     }
 
+    private static void noticeRewrite() {
+        Descriptor endpoint = Descriptor.parse("{\"v\":1,\"host\":\"Ep.Example\",\"ports\":{\"80\":8080,\"443\":8443}}");
+        String raw = "https://lan3rd.line.me:443/v1/lineplay/android/a%2Fb?q=1%20#f%2F";
+        NoticeRewrite.Route route = NoticeRewrite.route(raw, endpoint);
+        check(route.routed(), "notice-api-target");
+        check(route.url().equals("https://ep.example:8443/v1/lineplay/android/a%2Fb?q=1%20#f%2F"), "notice-raw-parts");
+        check(!route.followsRedirects(), "notice-no-redirect");
+
+        route = NoticeRewrite.route("http://play-static.line-scdn.net/img/read/notice/a%2Fb?q=%2F", endpoint);
+        check(route.routed() && route.url().equals("http://ep.example:8080/img/read/notice/a%2Fb?q=%2F"), "notice-http-port");
+        route = NoticeRewrite.route("https://fapi.play.naver.jp:443/v4/a", endpoint);
+        check(route.routed() && route.url().equals("https://ep.example:8443/v4/a"), "notice-suffix-default-port");
+        check(NoticeRewrite.route("https://fapi.play.naver.net/v4/a", endpoint).routed(), "notice-naver-net-family");
+        check(NoticeRewrite.route("https://asset.line-apps.com/a", endpoint).routed(), "notice-line-apps-family");
+        check(NoticeRewrite.route("https://sdk.line.naver.jp/a", endpoint).routed(), "notice-line-naver-family");
+        String[] apexHosts = {
+                "play.naver.jp", "play.naver.net", "line-scdn.net", "line-apps.com", "line.naver.jp"
+        };
+        for (String host : apexHosts) {
+            route = NoticeRewrite.route("https://" + host + "/v1", endpoint);
+            check(route.routed() && route.url().equals("https://ep.example:8443/v1"), "notice-apex-" + host);
+            check(!NoticeRewrite.route("https://x" + host + "/v1", endpoint).routed(), "notice-prefix-trap-" + host);
+            check(!NoticeRewrite.route("https://" + host + ".evil.example/v1", endpoint).routed(),
+                    "notice-suffix-trap-" + host);
+        }
+        route = NoticeRewrite.route("https://LAN3RD.LINE.ME./v1", endpoint);
+        check(route.routed() && route.url().equals("https://ep.example:8443/v1"), "notice-case-trailing-dot");
+        route = NoticeRewrite.route("https://terms.line.me/v1", endpoint);
+        check(route.routed(), "notice-exact-contract-host");
+        route = NoticeRewrite.route("https://sdbx-terms3rd.line-apps.com/v1", endpoint);
+        check(route.routed(), "notice-sdk-sandbox-host");
+
+        route = NoticeRewrite.route("https://unrelated.example/a%2Fb?q=1%20#f%2F", null);
+        check(!route.routed() && route.followsRedirects(), "notice-unrelated-no-config");
+        check(route.url().equals("https://unrelated.example/a%2Fb?q=1%20#f%2F"), "notice-unrelated-raw");
+        check(!NoticeRewrite.route("https://evil.line.me/v1", endpoint).routed(), "notice-no-line-me-suffix");
+        check(!NoticeRewrite.route("https://fapi.play.naver.jp.evil.com/v1", endpoint).routed(), "notice-suffix-trap");
+        check(!NoticeRewrite.route("http://127.0.0.1:8080/v1", endpoint).routed(), "notice-ip-unrelated");
+        String ipv6 = "http://[2001:db8::1]:8080/a%2Fb?q=%2F";
+        route = NoticeRewrite.route(ipv6, endpoint);
+        check(!route.routed() && route.url().equals(ipv6), "notice-ipv6-unrelated-raw");
+
+        route = NoticeRewrite.route("https://lan3rd.line.me/v1", Descriptor.parse("{\"v\":1,\"host\":\"lan3rd.line.me\"}"));
+        check(route.routed() && route.url().equals("https://lan3rd.line.me/v1") && !route.followsRedirects(), "notice-same-authority-still-no-redirect");
+        badNotice("https://lan3rd.line.me/v1", null, "notice-missing-config");
+        badNotice("https://lan3rd.line.me:444/v1", endpoint, "notice-nondefault-port");
+        badNotice("http://lan3rd.line.me:81/v1", endpoint, "notice-http-nondefault-port");
+        badNotice("https://lan3rd.line.me:0/v1", endpoint, "notice-port-zero");
+        badNotice("https://lan3rd.line.me:65536/v1", endpoint, "notice-port-overflow");
+        badNotice("https://lan3rd.line.me:/v1", endpoint, "notice-port-empty");
+        badNotice("https://lan3rd.line.me:bad/v1", endpoint, "notice-port-malformed");
+        badNotice("https://user@lan3rd.line.me/v1", endpoint, "notice-userinfo");
+        badNotice("https://lan3rd.line%2Eme/v1", endpoint, "notice-percent-host");
+        badNotice("https://lan3rd.line.me/v1?bad=%2", endpoint, "notice-malformed-url");
+        badNotice("https://lan3rd.line.me.evil.com:bad/v1", endpoint, "notice-malformed-unrelated");
+        check(sameNotice("https://lan3rd.line.me:443/v1", null), "notice-target-fails-closed");
+    }
+
+    private static void noticeMigration() {
+        String origin = "https://endpoint.example:8443";
+        NoticeStore matching = new NoticeStore();
+        matching.origin = origin;
+        check(!migrate(origin, false, matching), "migration-match-skip");
+        check(matching.calls.size() == 1 && matching.calls.get(0).equals("origin"), "migration-match-no-reset");
+        check(matching.rows.containsKey("notification_pref") && matching.prefs.containsKey("notice_last_revision"),
+                "migration-match-preserves-cache");
+
+        NoticeStore first = new NoticeStore();
+        first.origin = "https://old.example";
+        check(migrate(origin, false, first), "migration-first-reset");
+        check(first.calls.equals(Arrays.asList("origin", "db", "prefs", "marker")), "migration-marker-last");
+        check(!first.rows.containsKey("notification_pref") && !first.rows.containsKey("notification_image"),
+                "migration-clears-notice-tables");
+        check("preserve".equals(first.rows.get("game_state")), "migration-preserves-other-table");
+        check(!first.prefs.containsKey("notice_last_revision")
+                        && !first.prefs.containsKey("board_request_timestamp_notice")
+                        && !first.prefs.containsKey("notice_server_timestamp")
+                        && !first.prefs.containsKey("notice_local_timestamp"),
+                "migration-clears-exact-keys");
+        check("preserve".equals(first.prefs.get("white_list"))
+                        && "preserve".equals(first.prefs.get("other_pref")),
+                "migration-preserves-other-preferences");
+        check(origin.equals(first.origin), "migration-origin-written");
+
+        NoticeStore prefFailure = new NoticeStore();
+        prefFailure.origin = null;
+        prefFailure.failPreferences = true;
+        check(migrationFails(origin, false, prefFailure), "migration-pref-failure");
+        check(prefFailure.origin == null && !prefFailure.calls.contains("marker"), "migration-no-marker-on-failure");
+        prefFailure.failPreferences = false;
+        check(migrate(origin, false, prefFailure), "migration-retries-without-marker");
+        check(origin.equals(prefFailure.origin), "migration-retry-marker");
+
+        NoticeStore databaseFailure = new NoticeStore();
+        databaseFailure.origin = "https://old.example";
+        Map<String, String> originalPreferences = new HashMap<>(databaseFailure.prefs);
+        databaseFailure.failDatabase = true;
+        check(migrationFails(origin, false, databaseFailure), "migration-db-failure");
+        check(databaseFailure.prefs.equals(originalPreferences)
+                        && "https://old.example".equals(databaseFailure.origin),
+                "migration-db-failure-preserves-preferences-and-marker");
+        check(databaseFailure.calls.equals(Arrays.asList("origin", "db")),
+                "migration-db-failure-stops-before-preferences");
+
+        NoticeStore markerFailure = new NoticeStore();
+        markerFailure.origin = "https://old.example";
+        markerFailure.failMarker = true;
+        check(migrationFails(origin, false, markerFailure), "migration-marker-failure");
+        check(origin.equals(markerFailure.origin), "migration-marker-failure-memory-value");
+        markerFailure.failMarker = false;
+        check(migrate(origin, true, markerFailure), "migration-force-retry-after-marker-failure");
+        check(markerFailure.calls.get(markerFailure.calls.size() - 3).equals("db")
+                        && markerFailure.calls.get(markerFailure.calls.size() - 2).equals("prefs")
+                        && markerFailure.calls.get(markerFailure.calls.size() - 1).equals("marker"),
+                "migration-forced-reset-order");
+    }
+
+    private static boolean migrate(String origin, boolean retry, NoticeStore store) {
+        try {
+            return NoticeMigration.prepare(origin, retry, store);
+        } catch (IOException e) {
+            check(false, "migration-unexpected-failure");
+            return false;
+        }
+    }
+
+    private static boolean migrationFails(String origin, boolean retry, NoticeStore store) {
+        try {
+            NoticeMigration.prepare(origin, retry, store);
+            return false;
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static final class NoticeStore implements NoticeMigration.Store {
+        String origin;
+        boolean failPreferences;
+        boolean failDatabase;
+        boolean failMarker;
+        final ArrayList<String> calls = new ArrayList<>();
+        final Map<String, String> rows = new HashMap<>();
+        final Map<String, String> prefs = new HashMap<>();
+
+        NoticeStore() {
+            rows.put("notification_pref", "cached notice");
+            rows.put("notification_image", "cached banner");
+            rows.put("game_state", "preserve");
+            prefs.put("notice_last_revision", "old");
+            prefs.put("board_request_timestamp_notice", "old");
+            prefs.put("notice_server_timestamp", "old");
+            prefs.put("notice_local_timestamp", "old");
+            prefs.put("white_list", "preserve");
+            prefs.put("other_pref", "preserve");
+        }
+
+        public String origin() {
+            calls.add("origin");
+            return origin;
+        }
+
+        public void clearTables(String database, String[] tables) throws IOException {
+            calls.add("db");
+            if (!NoticeMigration.DATABASE.equals(database)
+                    || !Arrays.equals(tables, new String[] {"notification_pref", "notification_image"})) {
+                throw new IOException("wrong table scope");
+            }
+            if (failDatabase) {
+                throw new IOException("database reset failed");
+            }
+            for (String table : tables) {
+                rows.remove(table);
+            }
+        }
+
+        public void removePreferences(String preferences, String[] keys) throws IOException {
+            calls.add("prefs");
+            if (!NoticeMigration.PREFERENCES.equals(preferences)
+                    || !Arrays.equals(keys, new String[] {
+                            "notice_last_revision", "board_request_timestamp_notice",
+                            "notice_server_timestamp", "notice_local_timestamp"})) {
+                throw new IOException("wrong preference scope");
+            }
+            for (String key : keys) {
+                prefs.remove(key);
+            }
+            if (failPreferences) {
+                throw new IOException("preference commit failed");
+            }
+        }
+
+        public void writeOrigin(String value) throws IOException {
+            calls.add("marker");
+            origin = value;
+            if (failMarker) {
+                throw new IOException("marker commit failed");
+            }
+        }
+    }
+
     private static void descriptor() {
         Descriptor d = Descriptor.parse("{\"v\":1,\"host\":\"Cherry.Example\",\"note\":\"supersecretvalue\"}");
         check(d.host().equals("cherry.example"), "host-lower");
@@ -373,6 +579,8 @@ public final class CoreTest {
             Descriptor d = Descriptor.parse("{\"v\":1,\"host\":\"ASCII.EXAMPLE\"}");
             check(d.host().equals("ascii.example"), "host-turkish");
             check(WebRewrite.rewrite("https://NOTICE2.LINE.ME/Ab%2F?q=I%20#f%2F", d).equals("https://ascii.example/Ab%2F?q=I%20#f%2F"), "rewrite-turkish");
+            NoticeRewrite.Route route = NoticeRewrite.route("HTTPS://PLAY.NAVER.JP./v1", d);
+            check(route.routed() && route.url().equals("HTTPS://ascii.example/v1"), "notice-turkish");
         } finally {
             Locale.setDefault(original);
         }
@@ -478,6 +686,25 @@ public final class CoreTest {
 
     private static boolean same(String raw, Descriptor d) {
         return WebRewrite.rewrite(raw, d) == raw;
+    }
+
+    private static boolean sameNotice(String raw, Descriptor d) {
+        try {
+            NoticeRewrite.route(raw, d);
+            return false;
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+    }
+
+    private static void badNotice(String raw, Descriptor d, String name) {
+        boolean threw = false;
+        try {
+            NoticeRewrite.route(raw, d);
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        check(threw, name);
     }
 
     private static void bad(String json, String name) {

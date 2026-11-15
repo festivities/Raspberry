@@ -28,7 +28,9 @@ import com.android.tools.smali.dexlib2.writer.pool.DexPool;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -146,7 +148,186 @@ final class SelfTest {
         runShape(dir);
         operandDrift(dir);
         editedTailIsNotASubstring(dir);
+        noticeRouting(dir);
         System.out.println("selftest ok");
+    }
+
+    private static void noticeRouting(File dir) throws Exception {
+        List<Method> source = List.of(
+                noticeGetMethod(),
+                noticeImageMethod(),
+                noticeErrorMethod(),
+                noticeInitMethod(),
+                noticeTaskMethod());
+        File input = new File(dir, "notice-source.dex");
+        File output = new File(dir, "notice-patched.dex");
+        write(input, source);
+        var before = Main.load(input.getPath());
+        List<Method> patched = new ArrayList<>();
+        for (Method method : source) {
+            Method original = findKey(before, Semantic.key(method));
+            MethodImplementation edit = Edits.edit(original);
+            if (edit == null) {
+                fail("notice edit missing " + Semantic.key(original));
+            }
+            patched.add(copy(original, edit));
+        }
+        write(output, patched);
+        var after = Main.load(output.getPath());
+        for (Method method : source) {
+            String key = Semantic.key(method);
+            Method original = findKey(before, key);
+            Method rewritten = findKey(after, key);
+            Main.checkEdited(original, rewritten);
+        }
+
+        String imageKey = "Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B";
+        List<String> imageBefore = Semantic.rows(findKey(before, imageKey).getImplementation());
+        List<String> imageAfter = Semantic.rows(findKey(after, imageKey).getImplementation());
+        if (!imageAfter.get(2).equals(imageBefore.get(2))
+                || !imageAfter.get(6).startsWith("INVOKE_STATIC_RANGE")
+                || !imageAfter.get(6).contains("openNoticeConnection")
+                || !imageAfter.get(6).contains("range=20,1")
+                || !tryRows(imageAfter).equals(tryRows(imageBefore))
+                || !target(imageAfter.get(2)).equals(target(imageBefore.get(2)))) {
+            fail("notice high-register range/branch/try semantics " + imageAfter);
+        }
+        if (!imageAfter.get(5).contains("Ljava/net/URL;-><init>")
+                || !imageAfter.get(7).startsWith("MOVE_RESULT_OBJECT")) {
+            fail("notice URL construction/result " + imageAfter);
+        }
+
+        String getKey = "Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;->get(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;";
+        List<String> getBefore = Semantic.rows(findKey(before, getKey).getImplementation());
+        List<String> getAfter = Semantic.rows(findKey(after, getKey).getImplementation());
+        if (!getAfter.get(4).startsWith("INVOKE_STATIC")
+                || !getAfter.get(4).contains("openNoticeConnection")
+                || !getAfter.get(3).contains("Ljava/net/URL;-><init>")
+                || !getAfter.get(5).startsWith("MOVE_RESULT_OBJECT")
+                || !getBefore.get(3).contains("Ljava/net/URL;-><init>")
+                || !getBefore.get(4).contains("Ljava/net/URL;->openConnection")) {
+            fail("notice GET invocation semantics " + getBefore + " / " + getAfter);
+        }
+        String initKey = "Ljp/naver/lineplay/android/LineplayApplication;->initNotice()V";
+        List<String> initAfter = Semantic.rows(findKey(after, initKey).getImplementation());
+        if (!initAfter.get(0).contains("captureNoticeContext")
+                || !initAfter.get(1).contains("LineNotice;->init")) {
+            fail("notice context capture order " + initAfter);
+        }
+
+        String taskKey = "Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;";
+        List<String> taskBefore = Semantic.rows(findKey(before, taskKey).getImplementation());
+        List<String> taskAfter = Semantic.rows(findKey(after, taskKey).getImplementation());
+        List<String> beforeCode = codeRows(findKey(before, taskKey));
+        List<String> afterCode = codeRows(findKey(after, taskKey));
+        if (!afterCode.get(0).equals(beforeCode.get(0))
+                || !taskAfter.get(1).contains("LineNoticeConfig;->getContext")
+                || !taskAfter.get(2).contains("prepareNotice")
+                || !afterCode.subList(3, afterCode.size()).equals(shift(beforeCode.subList(2, beforeCode.size()), 1))) {
+            fail("notice task prefix/body " + taskBefore + " / " + taskAfter);
+        }
+        if (!tryRows(taskBefore).equals(List.of("try 1..2 -> Ljava/lang/Exception;@6"))
+                || !tryRows(taskAfter).equals(List.of("try 1..3 -> Ljava/lang/Exception;@7"))) {
+            fail("notice task exception boundary " + tryRows(taskBefore) + " / " + tryRows(taskAfter));
+        }
+    }
+
+    private static Method noticeGetMethod() {
+        MutableMethodImplementation impl = new MutableMethodImplementation(6);
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_STATIC,
+                Refs.method("Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;", "makeUrl",
+                        List.of("Ljava/lang/String;", "Ljava/util/List;"), "Ljava/lang/String;"), 4, 5));
+        impl.addInstruction(Refs.moveResultObj(4));
+        impl.addInstruction(Refs.newInstance(0, "Ljava/net/URL;"));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_DIRECT,
+                Refs.method("Ljava/net/URL;", "<init>", List.of("Ljava/lang/String;"), "V"), 0, 4));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_VIRTUAL, Refs.URL_OPEN_CONNECTION, 0));
+        impl.addInstruction(Refs.moveResultObj(1));
+        impl.addInstruction(Refs.retObj(1));
+        return targetMethod(
+                "Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;", "get",
+                List.of(new ImmutableMethodParameter("Ljava/lang/String;", Set(), "url"),
+                        new ImmutableMethodParameter("Ljava/util/List;", Set(), "params")),
+                "Ljava/io/InputStream;", impl, AccessFlags.PUBLIC.getValue());
+    }
+
+    /** Mimics the image URL constructor/open inside a branched try region using an incoming high register. */
+    private static Method noticeImageMethod() {
+        MutableMethodImplementation impl = new MutableMethodImplementation(24);
+        impl.addInstruction(Refs.const4(0, 0));
+        impl.addInstruction(Refs.const16(23, 0));
+        impl.addInstruction(Refs.const4(1, 0));
+        impl.addInstruction(Refs.newInstance(20, "Ljava/net/URL;"));
+        impl.addInstruction(Refs.constString(21, "https://notice.example/image"));
+        impl.addInstruction(new BuilderInstruction3rc(Opcode.INVOKE_DIRECT_RANGE, 20, 2,
+                Refs.method("Ljava/net/URL;", "<init>", List.of("Ljava/lang/String;"), "V")));
+        impl.addInstruction(new BuilderInstruction3rc(Opcode.INVOKE_VIRTUAL_RANGE, 20, 1, Refs.URL_OPEN_CONNECTION));
+        impl.addInstruction(Refs.moveResultObj(22));
+        impl.addInstruction(Refs.const16(23, 0));
+        impl.addInstruction(Refs.retObj(23));
+        impl.addInstruction(Refs.const16(23, 0));
+        impl.addInstruction(Refs.retObj(23));
+        impl.addInstruction(new BuilderInstruction11x(Opcode.MOVE_EXCEPTION, 22));
+        impl.addInstruction(Refs.const16(23, 0));
+        impl.addInstruction(Refs.retObj(23));
+        impl.replaceInstruction(2, new BuilderInstruction21t(Opcode.IF_NEZ, 0, impl.newLabelForIndex(10)));
+        impl.addCatch("Ljava/io/IOException;", impl.newLabelForIndex(3),
+                impl.newLabelForIndex(10), impl.newLabelForIndex(12));
+        return targetMethod(
+                "Ljp/naver/common/android/notice/notification/ImageDownloadTask;", "downloadImage",
+                List.of(), "[B", impl, AccessFlags.PRIVATE.getValue());
+    }
+
+    private static Method noticeErrorMethod() {
+        MutableMethodImplementation impl = new MutableMethodImplementation(10);
+        impl.addInstruction(Refs.newInstance(4, "Ljava/net/URL;"));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_DIRECT,
+                Refs.method("Ljava/net/URL;", "<init>", List.of("Ljava/lang/String;"), "V"), 4, 8));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_VIRTUAL, Refs.URL_OPEN_CONNECTION, 4));
+        impl.addInstruction(Refs.moveResultObj(5));
+        impl.addInstruction(Refs.const4(0, 1));
+        impl.addInstruction(new BuilderInstruction11x(Opcode.RETURN, 0));
+        return targetMethod(
+                "Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;", "sendFailLog",
+                List.of(new ImmutableMethodParameter("Ljava/lang/String;", Set(), "url"),
+                        new ImmutableMethodParameter("Ljava/lang/String;", Set(), "message")),
+                "Z", impl, AccessFlags.PUBLIC.getValue() | AccessFlags.STATIC.getValue());
+    }
+
+    private static Method noticeInitMethod() {
+        MutableMethodImplementation impl = new MutableMethodImplementation(4);
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_STATIC,
+                Refs.method("Ljp/naver/common/android/notice/LineNotice;", "init",
+                        List.of("Landroid/content/Context;"), "V"), 3));
+        impl.addInstruction(Refs.const4(0, 0));
+        impl.addInstruction(Refs.retVoid());
+        return targetMethod(
+                "Ljp/naver/lineplay/android/LineplayApplication;", "initNotice",
+                List.of(), "V", impl, AccessFlags.PRIVATE.getValue());
+    }
+
+    private static Method noticeTaskMethod() {
+        MutableMethodImplementation impl = new MutableMethodImplementation(2);
+        impl.addInstruction(Refs.const4(0, 0));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_STATIC, Refs.NOTICE_GET_CONTEXT));
+        impl.addInstruction(Refs.retObj(0));
+        impl.addInstruction(Refs.retObj(0));
+        impl.addInstruction(Refs.retObj(0));
+        impl.addInstruction(new BuilderInstruction11x(Opcode.MOVE_EXCEPTION, 1));
+        impl.addInstruction(Refs.retObj(1));
+        impl.replaceInstruction(3, new BuilderInstruction21t(Opcode.IF_EQZ, 0, impl.newLabelForIndex(5)));
+        impl.addCatch("Ljava/lang/Exception;", impl.newLabelForIndex(1),
+                impl.newLabelForIndex(2), impl.newLabelForIndex(6));
+        return targetMethod(
+                "Ljp/naver/common/android/notice/notification/NotificationTask;", "doInBackground",
+                List.of(new ImmutableMethodParameter("[Ljava/lang/Void;", Set(), "params")),
+                "Ljp/naver/common/android/notice/model/NoticeCallbackResult;", impl,
+                AccessFlags.PROTECTED.getValue());
+    }
+
+    private static Method targetMethod(String cls, String name, List<ImmutableMethodParameter> params,
+            String ret, MethodImplementation impl, int access) {
+        return new ImmutableMethod(cls, name, params, ret, access, java.util.Set.of(), java.util.Set.of(), impl);
     }
 
     private static Method gateMethod() {
@@ -449,14 +630,31 @@ final class SelfTest {
     }
 
     private static void write(File out, List<Method> methods) throws Exception {
-        ClassDef cls = new ImmutableClassDef(
-                "Ldev/raspberry/dexpatch/Synth;",
-                AccessFlags.PUBLIC.getValue(),
-                "Ljava/lang/Object;",
-                null, null, java.util.Set.of(), null, methods);
         DexPool pool = new DexPool(Opcodes.forApi(33));
-        pool.internClass(cls);
+        Map<String, List<Method>> byClass = new LinkedHashMap<>();
+        for (Method method : methods) {
+            byClass.computeIfAbsent(method.getDefiningClass(), ignored -> new ArrayList<>()).add(method);
+        }
+        for (Map.Entry<String, List<Method>> entry : byClass.entrySet()) {
+            ClassDef cls = new ImmutableClassDef(
+                    entry.getKey(),
+                    AccessFlags.PUBLIC.getValue(),
+                    "Ljava/lang/Object;",
+                    null, null, java.util.Set.of(), null, entry.getValue());
+            pool.internClass(cls);
+        }
         pool.writeTo(new FileDataStore(out));
+    }
+
+    private static Method findKey(com.android.tools.smali.dexlib2.iface.DexFile dex, String key) {
+        for (ClassDef c : dex.getClasses()) {
+            for (Method m : c.getMethods()) {
+                if (Semantic.key(m).equals(key)) {
+                    return m;
+                }
+            }
+        }
+        throw new IllegalStateException("missing " + key);
     }
 
     private static Method find(com.android.tools.smali.dexlib2.iface.DexFile dex, String name) {

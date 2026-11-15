@@ -45,6 +45,11 @@ func Classes3Edits() []DexEdit {
 		{Class: "Ljp/naver/lineplay/android/LinePlay;", Name: "updateURLSubWebViewFromUiThread", Proto: "(Ljava/lang/String;)V", Kind: "rewrite-arg"},
 		{Class: "Ljp/naver/common/android/notice/util/LanLinkUtil;", Name: "setCookieNLoadUrl", Proto: "(Landroid/webkit/WebView;Ljava/lang/String;)V", Kind: "rewrite-arg"},
 		{Class: "Ljp/naver/lineplay/android/LinePlay;", Name: "openWebBrowserInGLThread", Proto: "(Ljava/lang/String;)V", Kind: "rewrite-arg"},
+		{Class: "Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;", Name: "get", Proto: "(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;", Kind: "notice-open-connection"},
+		{Class: "Ljp/naver/common/android/notice/notification/ImageDownloadTask;", Name: "downloadImage", Proto: "()[B", Kind: "notice-open-connection"},
+		{Class: "Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;", Name: "sendFailLog", Proto: "(Ljava/lang/String;Ljava/lang/String;)Z", Kind: "notice-open-connection"},
+		{Class: "Ljp/naver/lineplay/android/LineplayApplication;", Name: "initNotice", Proto: "()V", Kind: "notice-context-capture"},
+		{Class: "Ljp/naver/common/android/notice/notification/NotificationTask;", Name: "doInBackground", Proto: "([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;", Kind: "notice-prepare"},
 	}
 }
 

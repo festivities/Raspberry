@@ -2,7 +2,7 @@
 
 Raspberry patches a player's own, hash-checked LINE PLAY 10.1.0.0 APK. It does not distribute the game, store Discord passwords or embed an operator's secrets. The endpoint is operator configuration, not a secret.
 
-The iOS 10.1.0 IPA is under static assessment only; it is not supported by the patcher. Its AirArmor-related signature/debugger checks have been located, but weaker enforcement, a safe compatibility patch and its native TLS policy are not established. See [ios.md](ios.md); do not transfer Android's findings to iOS by assumption.
+The iOS 10.1.0 IPA is not supported by the patcher; further investigation is deferred until Android acceptance. Prior static work located AirArmor-related signature/debugger checks, but weaker enforcement, a safe compatibility patch and its native TLS policy are not established. See [ios.md](ios.md); do not transfer Android's findings to iOS by assumption.
 
 ## Required checks
 
@@ -18,6 +18,8 @@ These are acceptance requirements, not a claim that unfinished components have p
 The current `--dev-pin-sha256` implementation is an **additional** leaf-certificate check after platform trust, scoped to Java endpoint requests. It does not yet provide the planned self-signed lab mode and cannot change Chrome, Custom Tabs or WebView trust. Those browsers still require a trusted endpoint certificate; do not bypass their certificate warnings to claim sign-in or web acceptance.
 
 Stored authorization is bound to the descriptor's canonical HTTPS origin. Changing that origin, or finding an older unbound marker, requires fresh SSO rather than sending the saved code to another operator. Fresh SSO removes only the old `files/avcookie.na` game-session credential before saving the new authorization; failure to remove it stops authorization. Accounts, downloaded assets and other preferences are not deleted. Ordinary same-origin relaunch preserves the session.
+
+Java notice requests use their own scoped authority rewrite, not the native resolver hook. Recognized LINE targets require validated configuration, use the mapped HTTP/HTTPS port and do not follow redirects; HTTPS keeps platform trust plus any explicitly configured additional pin. The notice-list cache has a separate endpoint-origin marker. Migration removes only the two notice tables' cached content/read history and four list cursor/time keys, then commits the marker last; a failure returns through the SDK's error path before cache use or request construction. This is not a general notice filter, account cleanup or whole-SDK cache reset.
 
 ## Inherited native-transport limit
 

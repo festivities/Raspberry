@@ -132,7 +132,12 @@ public final class Main {
                     "Ljp/naver/lineplay/android/LinePlay;->updateURLFromUiThread(Ljava/lang/String;)V",
                     "Ljp/naver/lineplay/android/LinePlay;->updateURLSubWebViewFromUiThread(Ljava/lang/String;)V",
                     "Ljp/naver/lineplay/android/LinePlay;->openWebBrowserInGLThread(Ljava/lang/String;)V",
-                    "Ljp/naver/common/android/notice/util/LanLinkUtil;->setCookieNLoadUrl(Landroid/webkit/WebView;Ljava/lang/String;)V" -> true;
+                    "Ljp/naver/common/android/notice/util/LanLinkUtil;->setCookieNLoadUrl(Landroid/webkit/WebView;Ljava/lang/String;)V",
+                    "Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;->get(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;",
+                    "Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B",
+                    "Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;->sendFailLog(Ljava/lang/String;Ljava/lang/String;)Z",
+                    "Ljp/naver/lineplay/android/LineplayApplication;->initNotice()V",
+                    "Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;" -> true;
             default -> false;
         };
     }

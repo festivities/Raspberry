@@ -31,6 +31,8 @@ Installing a build for a different HTTPS origin requires fresh Discord SSO; it d
 
 After Discord returns “Sign-in received,” close the browser tab or return to the game promptly. The game finishes sign-in once it is foregrounded; tickets last at most two minutes. If the ticket expires, use Retry for a new sign-in. The pending ticket is not saved across app/process exit.
 
+The notice-routing upgrade resets only the old notice-list cache and its four list cursors once for an unbound or changed endpoint. Cached notices/read history from that old origin are discarded; sign-in, game-session data and downloaded assets are preserved. Future notices from the same endpoint are not reset on every launch.
+
 ## Commands
 
 `verify --apk <file>` checks size and SHA-256 only. Any other input is refused. The error text is the size and digest, never file bytes.

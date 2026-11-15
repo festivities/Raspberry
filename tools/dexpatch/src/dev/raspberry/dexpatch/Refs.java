@@ -9,6 +9,7 @@ import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction21c
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction21s;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction21t;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction22c;
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction3rc;
 import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction35c;
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference;
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference;
@@ -27,6 +28,9 @@ final class Refs {
     static final MethodReference GET_CONTEXT = method(
             "Ljp/naver/lineplay/android/LineplayApplication;", "getContext",
             List.of(), "Landroid/content/Context;");
+    static final MethodReference NOTICE_GET_CONTEXT = method(
+            "Ljp/naver/common/android/notice/LineNoticeConfig;", "getContext",
+            List.of(), "Landroid/content/Context;");
     static final MethodReference DEVICE_UUID = method(
             HELPER, "deviceUuid", List.of("Landroid/content/Context;"), "Ljava/lang/String;");
     static final MethodReference BEFORE_NATIVE = method(
@@ -35,6 +39,14 @@ final class Refs {
             HELPER, "afterGameLoad", List.of("Landroid/app/Activity;"), "V");
     static final MethodReference REWRITE = method(
             HELPER, "rewrite", List.of("Ljava/lang/String;"), "Ljava/lang/String;");
+    static final MethodReference CAPTURE_NOTICE_CONTEXT = method(
+            HELPER, "captureNoticeContext", List.of("Landroid/content/Context;"), "V");
+    static final MethodReference PREPARE_NOTICE = method(
+            HELPER, "prepareNotice", List.of(), "V");
+    static final MethodReference OPEN_NOTICE_CONNECTION = method(
+            HELPER, "openNoticeConnection", List.of("Ljava/net/URL;"), "Ljava/net/URLConnection;");
+    static final MethodReference URL_OPEN_CONNECTION = method(
+            "Ljava/net/URL;", "openConnection", List.of(), "Ljava/net/URLConnection;");
     static final FieldReference OUTER = new ImmutableFieldReference(
             "Ljp/naver/lineplay/android/LinePlay$5;", "this$0", "Ljp/naver/lineplay/android/LinePlay;");
     static final MethodReference HANDLER_INIT = method(
@@ -66,6 +78,10 @@ final class Refs {
         int f = regs.length > 3 ? regs[3] : 0;
         int g = regs.length > 4 ? regs[4] : 0;
         return new BuilderInstruction35c(op, regs.length, c, d, e, f, g, ref);
+    }
+
+    static BuilderInstruction invokeRange(Opcode op, int start, int count, MethodReference ref) {
+        return new BuilderInstruction3rc(op, start, count, ref);
     }
 
     static BuilderInstruction moveResultObj(int reg) {

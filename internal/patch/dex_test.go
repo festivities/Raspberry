@@ -49,7 +49,14 @@ func TestAPKPlan(t *testing.T) {
 }
 
 func TestClasses3EditsCoverHelperCalls(t *testing.T) {
-	var gate, rewrite, noop int
+	var gate, rewrite, noop, noticeOpen, noticeContext, noticePrepare int
+	wantNotice := map[string]string{
+		"Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;->get(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;":                                "notice-open-connection",
+		"Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B":                                                                           "notice-open-connection",
+		"Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;->sendFailLog(Ljava/lang/String;Ljava/lang/String;)Z":                                                     "notice-open-connection",
+		"Ljp/naver/lineplay/android/LineplayApplication;->initNotice()V":                                                                                               "notice-context-capture",
+		"Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;": "notice-prepare",
+	}
 	for _, e := range Classes3Edits() {
 		switch e.Kind {
 		case "gate-and-hook":
@@ -58,13 +65,27 @@ func TestClasses3EditsCoverHelperCalls(t *testing.T) {
 			rewrite++
 		case "return-void":
 			noop++
+		case "notice-open-connection":
+			noticeOpen++
+		case "notice-context-capture":
+			noticeContext++
+		case "notice-prepare":
+			noticePrepare++
 		}
 		if e.Class == "" || e.Name == "" || e.Proto == "" {
 			t.Fatalf("incomplete %+v", e)
 		}
+		key := e.Class + "->" + e.Name + e.Proto
+		if kind, ok := wantNotice[key]; ok {
+			if kind != e.Kind {
+				t.Fatalf("notice edit %s kind %s", key, e.Kind)
+			}
+			delete(wantNotice, key)
+		}
 	}
-	if gate != 1 || rewrite != 4 || noop != 7 {
-		t.Fatalf("gate %d rewrite %d noop %d", gate, rewrite, noop)
+	if gate != 1 || rewrite != 4 || noop != 7 || noticeOpen != 3 || noticeContext != 1 || noticePrepare != 1 || len(wantNotice) != 0 {
+		t.Fatalf("gate %d rewrite %d noop %d noticeOpen %d noticeContext %d noticePrepare %d missing %v",
+			gate, rewrite, noop, noticeOpen, noticeContext, noticePrepare, wantNotice)
 	}
 	if HelperType != "Ldev/raspberry/Raspberry;" {
 		t.Fatal(HelperType)

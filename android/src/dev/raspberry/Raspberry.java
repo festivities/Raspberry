@@ -6,6 +6,8 @@ import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.DatabaseUtils;
+import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -23,6 +25,8 @@ import dev.raspberry.core.Callback;
 import dev.raspberry.core.Descriptor;
 import dev.raspberry.core.HexPin;
 import dev.raspberry.core.Json;
+import dev.raspberry.core.NoticeMigration;
+import dev.raspberry.core.NoticeRewrite;
 import dev.raspberry.core.PinPolicy;
 import dev.raspberry.core.Pkce;
 import dev.raspberry.core.SessionCookie;
@@ -42,6 +46,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.MessageDigest;
@@ -75,6 +80,8 @@ public final class Raspberry {
     private static volatile byte[] pin;
     private static volatile int config; // 0 unread, 1 ok, 2 bad
     private static volatile boolean nativeInstalled;
+    private static volatile boolean noticeMigrationRetry;
+    private static volatile String noticeReadyOrigin;
     private static SSLSocketFactory pinned;
     private static String pinnedHost;
     private static boolean pinLogged;
@@ -199,6 +206,166 @@ public final class Raspberry {
             d = endpoint;
         }
         return WebRewrite.rewrite(url, d);
+    }
+
+    /** Captures the Application context before the notice SDK is initialized. */
+    public static void captureNoticeContext(Context context) {
+        capture(context);
+    }
+
+    /** Opens a notice URL on the endpoint; target failures never fall back to LINE. */
+    public static URLConnection openNoticeConnection(URL source) throws IOException {
+        if (source == null) {
+            throw new IOException("notice routing unavailable");
+        }
+        synchronized (Raspberry.class) {
+            Context context = app;
+            if (endpoint == null && context != null) {
+                ensureConfig(context);
+            }
+            NoticeRewrite.Route route;
+            try {
+                route = NoticeRewrite.route(source.toExternalForm(), endpoint);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("notice routing unavailable");
+            }
+            if (route.noticeListRequest()
+                    && (endpoint == null || !noticeOrigin(endpoint).equals(noticeReadyOrigin))) {
+                throw new IOException("notice routing unavailable");
+            }
+            URL target = route.routed() ? new URL(route.url()) : source;
+            URLConnection connection = target.openConnection();
+            if (route.routed()) {
+                if (!(connection instanceof HttpURLConnection)) {
+                    throw new IOException("notice connection unavailable");
+                }
+                ((HttpURLConnection) connection).setInstanceFollowRedirects(route.followsRedirects());
+                if (pin != null && "https".equalsIgnoreCase(target.getProtocol())) {
+                    if (!(connection instanceof HttpsURLConnection)) {
+                        throw new IOException("notice TLS configuration unavailable");
+                    }
+                    try {
+                        ((HttpsURLConnection) connection).setSSLSocketFactory(
+                                pinFactory(pin, endpoint.host()));
+                    } catch (Exception e) {
+                        throw new IOException("notice TLS configuration unavailable");
+                    }
+                }
+            }
+            return connection;
+        }
+    }
+
+    /** Runs before the notice task reads local rows or constructs remote-list cursors. */
+    public static void prepareNotice() throws IOException {
+        synchronized (Raspberry.class) {
+            noticeReadyOrigin = null;
+            Context context = app;
+            if (context == null || !ensureConfig(context) || endpoint == null) {
+                noticeMigrationRetry = true;
+                throw new IOException("notice migration unavailable");
+            }
+            final String origin = noticeOrigin(endpoint);
+            try {
+                NoticeMigration.prepare(origin, noticeMigrationRetry, new NoticeMigration.Store() {
+                    public String origin() throws IOException {
+                        try {
+                            return PreferenceManager.getDefaultSharedPreferences(context)
+                                    .getString(NoticeMigration.ORIGIN_KEY, null);
+                        } catch (RuntimeException e) {
+                            throw new IOException("notice migration unavailable");
+                        }
+                    }
+
+                    public void clearTables(String database, String[] tables) throws IOException {
+                        clearNoticeTables(context, database, tables);
+                    }
+
+                    public void removePreferences(String preferences, String[] keys) throws IOException {
+                        clearNoticePreferences(context, preferences, keys);
+                    }
+
+                    public void writeOrigin(String value) throws IOException {
+                        try {
+                            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+                            if (!prefs.edit().putString(NoticeMigration.ORIGIN_KEY, value).commit()
+                                    || !value.equals(prefs.getString(NoticeMigration.ORIGIN_KEY, null))) {
+                                throw new IOException("notice migration unavailable");
+                            }
+                        } catch (RuntimeException e) {
+                            throw new IOException("notice migration unavailable");
+                        }
+                    }
+                });
+                noticeMigrationRetry = false;
+                noticeReadyOrigin = origin;
+            } catch (IOException e) {
+                noticeMigrationRetry = true;
+                noticeReadyOrigin = null;
+                throw e;
+            } catch (RuntimeException e) {
+                noticeMigrationRetry = true;
+                noticeReadyOrigin = null;
+                throw new IOException("notice migration unavailable");
+            }
+        }
+    }
+
+    private static String noticeOrigin(Descriptor descriptor) {
+        return "https://" + descriptor.httpsAuthority();
+    }
+
+    private static void clearNoticeTables(Context context, String database, String[] tables) throws IOException {
+        File path = context.getDatabasePath(database);
+        if (!path.exists()) {
+            return;
+        }
+        if (!path.isFile()) {
+            throw new IOException("notice migration unavailable");
+        }
+        SQLiteDatabase db = null;
+        try {
+            db = SQLiteDatabase.openDatabase(path.getPath(), null, SQLiteDatabase.OPEN_READWRITE);
+            if (db.getVersion() != 2) {
+                throw new IOException("notice migration unavailable");
+            }
+            db.beginTransaction();
+            try {
+                for (String table : tables) {
+                    db.delete(table, null, null);
+                    if (DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM " + table, null) != 0) {
+                        throw new IOException("notice migration unavailable");
+                    }
+                }
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("notice migration unavailable");
+        } finally {
+            if (db != null) {
+                db.close();
+            }
+        }
+    }
+
+    private static void clearNoticePreferences(Context context, String preferences, String[] keys) throws IOException {
+        SharedPreferences prefs = context.getSharedPreferences(preferences, Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        for (String key : keys) {
+            editor.remove(key);
+        }
+        if (!editor.commit()) {
+            throw new IOException("notice migration unavailable");
+        }
+        for (String key : keys) {
+            if (prefs.contains(key)) {
+                throw new IOException("notice migration unavailable");
+            }
+        }
     }
 
     private static native boolean installNative(String host, int[] ports);

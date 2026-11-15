@@ -13,9 +13,11 @@ import com.android.tools.smali.dexlib2.iface.Method;
 import com.android.tools.smali.dexlib2.iface.MethodImplementation;
 import com.android.tools.smali.dexlib2.iface.TryBlock;
 import com.android.tools.smali.dexlib2.iface.debug.DebugItem;
+import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.Instruction;
 import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction;
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction;
 import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction;
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference;
@@ -27,6 +29,8 @@ final class Edits {
     static final int GATE_INSNS = 10;
     static final int HOOK_INSNS = 13;
     static final int REWRITE_INSNS = 2;
+    static final int NOTICE_CONTEXT_INSNS = 1;
+    static final int NOTICE_OPEN_INSNS = 1;
 
     private Edits() {}
 
@@ -55,6 +59,14 @@ final class Edits {
                     "Ljp/naver/lineplay/android/LinePlay;->openWebBrowserInGLThread(Ljava/lang/String;)V",
                     "Ljp/naver/common/android/notice/util/LanLinkUtil;->setCookieNLoadUrl(Landroid/webkit/WebView;Ljava/lang/String;)V" ->
                     prefixRewrite(method, impl, stringParamIndex(key));
+            case "Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;->get(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;",
+                    "Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B",
+                    "Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;->sendFailLog(Ljava/lang/String;Ljava/lang/String;)Z" ->
+                    rewriteNoticeConnection(impl);
+            case "Ljp/naver/lineplay/android/LineplayApplication;->initNotice()V" ->
+                    prefixNoticeContext(method, impl);
+            case "Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;" ->
+                    prefixNoticePrepare(impl);
             default -> null;
         };
     }
@@ -117,6 +129,145 @@ final class Edits {
         MutableMethodImplementation impl = new MutableMethodImplementation(orig);
         impl.addInstruction(0, Refs.invoke(Opcode.INVOKE_STATIC, Refs.REWRITE, reg));
         impl.addInstruction(1, Refs.moveResultObj(reg));
+        return stripDebug(impl);
+    }
+
+    /** Replace exactly one URL.openConnection invocation without shifting its branches or handlers. */
+    static MethodImplementation rewriteNoticeConnection(MethodImplementation orig) {
+        List<BuilderInstruction> insns = new ArrayList<>();
+        for (BuilderInstruction instruction : new MutableMethodImplementation(orig).getInstructions()) {
+            insns.add(instruction);
+        }
+        int found = -1;
+        BuilderInstruction replacement = null;
+        for (int i = 0; i < insns.size(); i++) {
+            BuilderInstruction instruction = insns.get(i);
+            if (!(instruction instanceof ReferenceInstruction ri)
+                    || !Refs.refText(ri.getReference()).equals(Refs.refText(Refs.URL_OPEN_CONNECTION))) {
+                continue;
+            }
+            if (found >= 0 || (instruction.getOpcode() != Opcode.INVOKE_VIRTUAL
+                    && instruction.getOpcode() != Opcode.INVOKE_VIRTUAL_RANGE)) {
+                throw new IllegalStateException("notice openConnection shape");
+            }
+            int receiver;
+            if (instruction instanceof FiveRegisterInstruction five && five.getRegisterCount() == 1) {
+                receiver = five.getRegisterC();
+            } else if (instruction instanceof RegisterRangeInstruction range && range.getRegisterCount() == 1) {
+                receiver = range.getStartRegister();
+            } else {
+                throw new IllegalStateException("notice openConnection receiver");
+            }
+            if (receiver < 0 || receiver >= orig.getRegisterCount()) {
+                throw new IllegalStateException("notice openConnection register");
+            }
+            replacement = receiver <= 15
+                    ? Refs.invoke(Opcode.INVOKE_STATIC, Refs.OPEN_NOTICE_CONNECTION, receiver)
+                    : Refs.invokeRange(Opcode.INVOKE_STATIC_RANGE, receiver, 1, Refs.OPEN_NOTICE_CONNECTION);
+            if (replacement.getCodeUnits() != instruction.getCodeUnits()) {
+                throw new IllegalStateException("notice openConnection width");
+            }
+            found = i;
+        }
+        if (found < 0) {
+            throw new IllegalStateException("notice openConnection missing");
+        }
+        MutableMethodImplementation impl = new MutableMethodImplementation(orig);
+        impl.replaceInstruction(found, replacement);
+        return stripDebug(impl);
+    }
+
+    /** initNotice runs on the Application instance; capture its Context before SDK initialization. */
+    static MethodImplementation prefixNoticeContext(Method method, MethodImplementation orig) {
+        if (AccessFlags.STATIC.isSet(method.getAccessFlags()) || orig.getRegisterCount() == 0) {
+            throw new IllegalStateException("notice context register");
+        }
+        List<Instruction> instructions = new ArrayList<>();
+        for (Instruction instruction : orig.getInstructions()) {
+            instructions.add(instruction);
+        }
+        if (instructions.isEmpty() || !(instructions.get(0) instanceof ReferenceInstruction ri)
+                || instructions.get(0).getOpcode() != Opcode.INVOKE_STATIC
+                || !Refs.refText(ri.getReference()).equals(
+                        "Ljp/naver/common/android/notice/LineNotice;->init(Landroid/content/Context;)V")
+                || !(instructions.get(0) instanceof FiveRegisterInstruction five)
+                || five.getRegisterCount() != 1
+                || five.getRegisterC() != orig.getRegisterCount() - 1) {
+            throw new IllegalStateException("initNotice does not start with LineNotice.init(Context)");
+        }
+        MutableMethodImplementation impl = new MutableMethodImplementation(orig);
+        impl.addInstruction(0, Refs.invoke(
+                Opcode.INVOKE_STATIC, Refs.CAPTURE_NOTICE_CONTEXT, orig.getRegisterCount() - 1));
+        return stripDebug(impl);
+    }
+
+    /** Insert after getContext, within its existing Exception handler, before either task path. */
+    static MethodImplementation prefixNoticePrepare(MethodImplementation orig) {
+        List<Instruction> instructions = new ArrayList<>();
+        for (Instruction instruction : orig.getInstructions()) {
+            instructions.add(instruction);
+        }
+        int contextIndex = -1;
+        int contextStart = 0;
+        int address = 0;
+        String contextRef =
+                "Ljp/naver/common/android/notice/LineNoticeConfig;->getContext()Landroid/content/Context;";
+        for (int i = 0; i < instructions.size(); i++) {
+            Instruction instruction = instructions.get(i);
+            if (instruction instanceof ReferenceInstruction ri
+                    && contextRef.equals(Refs.refText(ri.getReference()))) {
+                if (contextIndex >= 0 || instruction.getOpcode() != Opcode.INVOKE_STATIC) {
+                    throw new IllegalStateException("notice getContext shape");
+                }
+                contextIndex = i;
+                contextStart = address;
+            }
+            address += instruction.getCodeUnits();
+        }
+        if (contextIndex < 0) {
+            throw new IllegalStateException("notice task missing getContext");
+        }
+        if (contextIndex + 1 < instructions.size()) {
+            Opcode next = instructions.get(contextIndex + 1).getOpcode();
+            if (next == Opcode.MOVE_RESULT || next == Opcode.MOVE_RESULT_OBJECT || next == Opcode.MOVE_RESULT_WIDE) {
+                throw new IllegalStateException("notice getContext result must remain unused");
+            }
+        }
+        boolean contextCaught = false;
+        int contextEnd = contextStart + instructions.get(contextIndex).getCodeUnits();
+        for (TryBlock<? extends ExceptionHandler> block : orig.getTryBlocks()) {
+            if (block.getStartCodeAddress() > contextStart
+                    || block.getStartCodeAddress() + block.getCodeUnitCount() < contextEnd) {
+                continue;
+            }
+            for (ExceptionHandler handler : block.getExceptionHandlers()) {
+                if ("Ljava/lang/Exception;".equals(handler.getExceptionType())) {
+                    contextCaught = true;
+                }
+            }
+        }
+        if (!contextCaught) {
+            throw new IllegalStateException("notice getContext is not caught by Exception");
+        }
+        MutableMethodImplementation impl = new MutableMethodImplementation(orig);
+        impl.addInstruction(contextIndex + 1, Refs.invoke(Opcode.INVOKE_STATIC, Refs.PREPARE_NOTICE));
+        boolean prepareCaught = false;
+        int prepareStart = contextEnd;
+        int prepareEnd = prepareStart + impl.getInstructions().get(contextIndex + 1).getCodeUnits();
+        for (TryBlock<? extends ExceptionHandler> block : impl.getTryBlocks()) {
+            if (block.getStartCodeAddress() > prepareStart
+                    || block.getStartCodeAddress() + block.getCodeUnitCount() < prepareEnd) {
+                continue;
+            }
+            for (ExceptionHandler handler : block.getExceptionHandlers()) {
+                if ("Ljava/lang/Exception;".equals(handler.getExceptionType())) {
+                    prepareCaught = true;
+                }
+            }
+        }
+        if (!prepareCaught) {
+            throw new IllegalStateException("notice prepare is outside Exception handler");
+        }
         return stripDebug(impl);
     }
 
