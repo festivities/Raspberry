@@ -6,6 +6,19 @@ Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab fa
 
 When the user says they are **moving to another conversation whose agent has no context at all**, the outgoing agent MUST record it here as **HANDOFF INITIATED** with a self-sufficient state snapshot, and the receiving agent MUST append **HANDOFF ACCEPTED** (dated, with any state corrections) once it has loaded context. Older INITIATED/ACCEPTED pairs move to HISTORY.md once accepted. Tell the user before writing a handoff so they can change the effort level.
 
+### HANDOFF ACCEPTED — 2026-11-15 (Android OAuth bug)
+
+- Read all four Raspberry context files, Cherry's complete server contract, and Android build/patch/security/usage docs. Clean `main` started at `c94da62`, matching remote tracking.
+- **User priority:** defer all further IPA reverse engineering until the patched APK is fully accepted. Historical iOS authorization below does not authorize resuming it now.
+- Cherry's November 15 end-to-end report supersedes the old unavailable-trusted-peer assumption: real Discord reaches the loopback callback, but exchange runs behind Chrome and Android 17 blocks the background app's network. This is server-reported evidence, not a newly reproduced Raspberry result.
+- Immediate work: retain the validated ticket/PKCE in memory, exchange once the owning game activity returns to the foreground within its lifetime, and add credential-free step diagnostics. Preserve TLS, cancellation, origin binding and session cleanup. No Phone-permission or compatibility bypass is authorized by this bug.
+- [V host] Go/native/repository gate, uncached race tests, both native ABI builds and DEX selftest pass before the fix. Read-only AVD identity confirms `emulator-5559` is Raspberry; fresh installed-package preflight is in progress. Older device/stub snapshots below remain historical.
+- [V preflight] Installed 10.1.0.0/code 254 points at an external public peer. Phone permission is already granted (not changed by this session). The installed signer differs from Raspberry's old development key; user explicitly authorized access only to Cherry's signing-key folder, and its existing client key matches. No other Cherry private data was read.
+- [V host/package] Main-reviewed foreground handoff passes Android core regressions and D8, full Go/native/repository gate and uncached race tests. Two same-endpoint/same-signer combined APKs are byte-identical, with expected three replacements/four additions and unchanged retained compressed payloads. Native compatibility edits remain one byte each; no development pin. Existing stock DEX edits/manifest are unchanged.
+- **Private current build/evidence:** `%TEMP%\opencode\raspberry\oauth-foreground-20261115\update-build.json` points to the signed pair; `preflight-report.txt` indexes pulled installed APK/descriptor/signer/screenshot. `build-update.ps1` preserves the installed descriptor and refuses an unhandled developer pin. Device regression is delegated with expiry then successful foreground-return steps; no runtime result yet. Do not confuse the new public-peer build with the old stub pair below.
+- **Foreground regression result [V]:** same-signer update installed with data retained. First Authorize stalled on Discord's consent spinner; a single fresh retry reached “Sign-in received. Return to the game to continue.” Returning promptly to the game saved authorization and reached language selection. Main independently checked callback/post-auth screenshots and ran `verify-auth-result.ps1`: marker true, UUID shape valid, saved origin equals descriptor. Only `classes5.dex` payload differs from the previously installed APK (apart from signatures).
+- **Final device/evidence:** Raspberry remains at language selection, English selected and Continue untouched; no gameplay/avatar creation or permission change. `device-test\followup.md`, screenshots `13-after-fresh-authorize.png` / `15-postauth-final.png` and private preferences/logs hold evidence. One `auth-step=exchange exception=java.io.IOException` predates the fresh callback capture; its attempt attribution is inconclusive. No server logs were read. Controlled 125-second callback expiry and exact network exchange count were not verified; host expiry/one-claim regressions pass. Full guest auto-entry/Garden/WebView/four-transport/DNS/ten-minute acceptance remains open. No test agent remains active.
+
 ### HANDOFF INITIATED — 2026-11-12 (user requested context handoff)
 
 Receiving agent: read all of `AGENTS.md`, this checkpoint and the accepted snapshot below, `CONTRACT.md`, then `docs/{ios,patches,security,build,usage}.md`. Read Cherry's `.agents/CONTRACT.md` read-only for newer replies. Append HANDOFF ACCEPTED after loading context; preserve superseded handoff pairs in HISTORY.
@@ -20,7 +33,7 @@ Receiving agent: read all of `AGENTS.md`, this checkpoint and the accepted snaps
 1. Reverify repo, Raspberry AVD identity and only the owned private stub. Do not recreate helpers or change permission/trust policies to get a green test.
 2. Classify the stock Phone-permission dependency statically. Keep Phone denied; do not silently add a new permission bypass. Report any scope decision requiring the user.
 3. Coordinate through this repo's CONTRACT for an isolated browser-trusted Cherry peer. Cherry's ongoing refactor belongs to its separate Claude Code session; its configurable listeners/`dev-fake`/discovery are server-reported available, not our end-to-end acceptance.
-4. Keep iOS static-only until Mac/device access exists. `docs/ios.md` lists Xcode/signing prerequisites and PlayCover's smoke-only limitations. Further static investigation can trace the final generic-message handler, but do not invent a byte patch from matching state numbers.
+4. iOS work is deferred by the user's November 15 instruction until the patched APK is fully accepted; do not resume even static investigation now. Existing findings remain in `docs/ios.md`.
 
 **Private evidence/tools:** `%TEMP%\opencode\raspberry\ios-airarmor-20261112\ios-airarmor.md` and `ida-evidence.txt` (raw consumer/predicate evidence lines 1335–1632); `%TEMP%\opencode\raspberry\routing-20261112\routing-result.md`, screenshots, preference backup and bounded ADB helpers; earlier combined signed APK/fixture pointers remain under `continuation-20261110\`. The array-free wrapper is `routing-20261112\scripts\invoke-raspberry-adb.ps1`; read its README and use quoted `"-"` for its default-output sentinel. Capture outputs privately. Keys remain outside Git. An accidental one-file repo extraction was contained in private scratch, source/scratch IPA hashes reverified and repo `Payload` absence checked; no derived material is included in this commit.
 
@@ -98,22 +111,22 @@ The accepted November 10 handoff and chronological continuation notes are preser
 
 **Tests.** Host unit tests for pure logic (descriptor parsing, host matching, port map, PKCE, patch application on synthetic binaries and a synthetic tiny APK); golden test of the patcher on the synthetic APK (byte-identical rerun); stub-server device tests through the `tester` agent; a final run against the lab Cherry (default ports at `10.0.2.2`) and then the user's production endpoint.
 
-## Status (2026-11-12)
+## Status (2026-11-15)
 
 | Item | State |
 | --- | --- |
-| Context and lab handoff | HANDOFF INITIATED 2026-11-12; incoming acceptance pending; Raspberry last verified at emulator-5559 |
+| Context and lab handoff | accepted 2026-11-15; Raspberry reverified at emulator-5559 |
 | Repo skeleton, gate, `check-repo` | implemented and tested |
 | Toolchain installed and recorded | installed; versions/pins in docs/build.md |
 | S1 static spike | private specs complete; public conclusions in docs/patches.md |
 | Isolated protocol stub | implemented and race-tested; not a game emulator |
-| R1 endpoint routing | wrong-origin gate passes; one mapped native HTTPS request; startup blocked by denied Phone permission; four-transport/DNS acceptance open |
+| R1 endpoint routing | historical synthetic wrong-origin/one native HTTPS proof; Phone now already granted; four-transport/DNS acceptance open |
 | R2 repackaged-client compatibility | tables implemented; combined package reaches the Discord gate; no 10-minute session |
 | R3 WebView rewrite | Java helper implemented; insertion proof and device acceptance pending |
-| R4 Discord sign-in (client) | pre-auth, cancellation and Exit/relaunch pass; real OAuth and guest auto-entry pending |
+| R4 Discord sign-in (client) | real-Discord callback → foreground exchange → persisted authorization → language selection passes; controlled device expiry/count and guest auto-entry remain open |
 | R5 patcher CLI | unified command/keygen and usage docs implemented; signed reruns byte-identical; pre-auth install passes |
-| R6 production end-to-end | not started |
-| iOS compatibility / AirArmor | bounded static assessment complete: same abnormal-state set, final message/re-sign effect unknown; no iOS runtime; CLI Android-only |
+| R6 production end-to-end | public-peer OAuth handoff passes; full game acceptance not complete |
+| iOS compatibility / AirArmor | further work deferred until APK acceptance; prior bounded static findings preserved; CLI Android-only |
 
 ## Roadmap
 

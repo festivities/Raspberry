@@ -29,6 +29,8 @@ The signed file name is fixed: `raspberry-lineplay-10.1.0.0.apk`. An existing fi
 
 Installing a build for a different HTTPS origin requires fresh Discord SSO; it does not reuse the previous operator's saved authorization. A fresh SSO clears the old game-session cookie, not accounts or downloaded assets. Losing/changing the APK signing key still requires uninstalling the old app before Android will accept the replacement.
 
+After Discord returns “Sign-in received,” close the browser tab or return to the game promptly. The game finishes sign-in once it is foregrounded; tickets last at most two minutes. If the ticket expires, use Retry for a new sign-in. The pending ticket is not saved across app/process exit.
+
 ## Commands
 
 `verify --apk <file>` checks size and SHA-256 only. Any other input is refused. The error text is the size and digest, never file bytes.

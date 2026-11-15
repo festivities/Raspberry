@@ -1,11 +1,13 @@
 package dev.raspberry;
 
 import android.app.Activity;
+import android.app.Application;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.preference.PreferenceManager;
@@ -30,6 +32,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -44,6 +47,7 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.List;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -80,6 +84,9 @@ public final class Raspberry {
     private static ServerSocket socket;
     private static int liveGen;
     private static Activity attemptActivity;
+    private static Activity resumedActivity;
+    private static Application lifecycleApplication;
+    private static boolean lifecycleRegistrationAttempted;
 
     private static Dialog dialog;
     private static Activity dialogActivity;
@@ -137,8 +144,20 @@ public final class Raspberry {
             if (dialogActivity == activity) {
                 dismiss();
             }
+            if (resumedActivity == activity) {
+                resumedActivity = null;
+            }
             abandon();
             return false;
+        }
+        registerLifecycle(activity);
+        // The first gate invocation precedes the sign-in Dialog, so focus is only an initial
+        // lifecycle-state hint; subsequent foreground changes come from real resume/pause events.
+        if (dialog == null && activity.hasWindowFocus()) {
+            resumedActivity = activity;
+        }
+        if (liveGen != 0) {
+            maybeStartExchange(liveGen);
         }
         if (deviceUuid(activity).length() > 0) {
             dismiss();
@@ -190,6 +209,50 @@ public final class Raspberry {
         }
     }
 
+    private static void registerLifecycle(final Activity first) {
+        if (lifecycleApplication != null || lifecycleRegistrationAttempted) {
+            return;
+        }
+        lifecycleRegistrationAttempted = true;
+        try {
+            final Application application = first.getApplication();
+            application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                public void onActivityCreated(Activity activity, Bundle state) {}
+                public void onActivityStarted(Activity activity) {}
+                public void onActivityResumed(Activity activity) {
+                    resumedActivity = activity;
+                    if (liveGen != 0) {
+                        maybeStartExchange(liveGen);
+                    }
+                }
+                public void onActivityPaused(Activity activity) {
+                    if (resumedActivity == activity) {
+                        resumedActivity = null;
+                    }
+                }
+                public void onActivityStopped(Activity activity) {}
+                public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+                public void onActivityDestroyed(Activity activity) {
+                    if (resumedActivity == activity) {
+                        resumedActivity = null;
+                    }
+                    if (attemptActivity == activity) {
+                        if (dialogActivity == activity) {
+                            dismiss();
+                        }
+                        abandon();
+                    }
+                }
+            });
+            lifecycleApplication = application;
+            if (dialog == null && first.hasWindowFocus()) {
+                resumedActivity = first;
+            }
+        } catch (RuntimeException e) {
+            logFailure("lifecycle-register", e);
+        }
+    }
+
     private static boolean ensureConfig(Context context) {
         if (config == 1) {
             return true;
@@ -215,6 +278,7 @@ public final class Raspberry {
                 config = 1;
                 return true;
             } catch (Exception e) {
+                logFailure("endpoint-config", e);
                 endpoint = null;
                 pin = null;
                 config = 2;
@@ -359,6 +423,12 @@ public final class Raspberry {
             return "Sign-in is unavailable.";
         }
         if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
+            if (attempt.pending(liveGen)) {
+                return "Return to the game to continue.";
+            }
+            if (attempt.exchanging(liveGen)) {
+                return "Finishing sign-in.";
+            }
             return "Waiting for the browser.";
         }
         if (cancelled) {
@@ -416,6 +486,7 @@ public final class Raspberry {
             setStatus("Waiting for the browser.");
             bindButtons();
         } catch (Exception e) {
+            logFailure("browser-start", e);
             failed = true;
             setStatus("Sign-in failed. Tap Retry.");
         } finally {
@@ -473,6 +544,7 @@ public final class Raspberry {
                         } catch (SocketTimeoutException e) {
                             continue;
                         }
+                        long receivedAt = System.nanoTime();
                         accepts++;
                         if (accepts > MAX_ACCEPTS || client.getInetAddress() == null || !client.getInetAddress().isLoopbackAddress()) {
                             close(client);
@@ -482,16 +554,21 @@ public final class Raspberry {
                             continue;
                         }
                         Callback cb = readCallback(client, gen);
-                        int decision = attempt.onCallback(gen, cb, System.nanoTime());
+                        int decision = attempt.onCallback(gen, cb, proof.verifier, receivedAt);
                         if (decision == Attempt.EXCHANGE) {
-                            write(client, 200, "You can close this tab.");
+                            write(client, 200, "Sign-in received. Return to the game to continue.");
                             close(client);
-                            finishExchange(gen, cb.ticket, proof);
+                            MAIN.post(new Runnable() {
+                                public void run() {
+                                    maybeStartExchange(gen);
+                                }
+                            });
                             return;
                         }
                         if (decision == Attempt.FAIL) {
                             write(client, 400, "Sign-in failed.");
                             close(client);
+                            logStep("callback");
                             markFailed(gen);
                             return;
                         }
@@ -502,6 +579,7 @@ public final class Raspberry {
                     markFailed(gen);
                 } catch (Exception e) {
                     if (attempt.live(gen, System.nanoTime())) {
+                        logFailure("callback-listener", e);
                         attempt.fail(gen);
                         markFailed(gen);
                     }
@@ -512,18 +590,72 @@ public final class Raspberry {
         };
     }
 
+    /** Claims the staged ticket only while its owning activity is lifecycle-resumed. */
+    private static void maybeStartExchange(final int gen) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            MAIN.post(new Runnable() {
+                public void run() {
+                    maybeStartExchange(gen);
+                }
+            });
+            return;
+        }
+        if (gen == 0 || liveGen != gen) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (!attempt.live(gen, now)) {
+            logStep("exchange-expired");
+            failed = true;
+            liveGen = 0;
+            attemptActivity = null;
+            setStatus("Sign-in failed. Tap Retry.");
+            bindButtons();
+            return;
+        }
+        if (!ownerOpen()) {
+            abandon();
+            return;
+        }
+        boolean foreground = ownerForeground();
+        final Attempt.Exchange exchange = attempt.claimExchange(gen, now, foreground);
+        if (exchange == null) {
+            if (attempt.pending(gen)) {
+                setStatus("Return to the game to continue.");
+                bindButtons();
+            }
+            return;
+        }
+        setStatus("Finishing sign-in.");
+        bindButtons();
+        try {
+            Thread thread = new Thread(new Runnable() {
+                public void run() {
+                    finishExchange(gen, exchange);
+                }
+            }, "raspberry-exchange");
+            thread.setDaemon(true);
+            thread.start();
+        } catch (RuntimeException e) {
+            exchange.clear();
+            attempt.fail(gen);
+            logFailure("exchange-start", e);
+            markFailed(gen);
+        }
+    }
+
     /**
-     * Runs off the main thread up to the HTTP call, then hands the result to the main thread:
-     * cancellation and the credential write are both main-thread actions, so they cannot
-     * interleave. The write re-checks this generation, the deadline, and that the activity
-     * which started this attempt is still open. A check from before the HTTP call cannot authorize.
+     * The HTTP call runs off the UI thread. The credential write is returned to the main thread
+     * and re-checks this generation, both deadlines, and that the owner is still open.
      */
-    private static void finishExchange(final int gen, String ticket, Pkce proof) {
+    private static void finishExchange(final int gen, final Attempt.Exchange exchange) {
         String code = null;
         try {
-            code = postExchange(ticket, proof.verifier);
+            code = postExchange(exchange);
         } catch (Exception e) {
-            code = null;
+            logFailure("exchange", e);
+        } finally {
+            exchange.clear();
         }
         final String got = code;
         MAIN.post(new Runnable() {
@@ -556,6 +688,11 @@ public final class Raspberry {
         });
     }
 
+    private static boolean ownerForeground() {
+        Activity owner = attemptActivity;
+        return lifecycleApplication != null && ownerOpen() && resumedActivity == owner;
+    }
+
     /** The activity that started this attempt, still able to receive the result. */
     private static boolean ownerOpen() {
         Activity owner = attemptActivity;
@@ -571,6 +708,7 @@ public final class Raspberry {
         String origin = "https://" + current.httpsAuthority();
         // A fresh SSO must not send the previous endpoint's AV_AUTH to this origin.
         if (!SessionCookie.clear(context.getFilesDir())) {
+            logStep("credential-store");
             return false;
         }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
@@ -579,16 +717,22 @@ public final class Raspberry {
         ed.putString(PREF_UUID, code);
         ed.putString(PREF_ORIGIN, origin);
         boolean stored = false;
+        boolean logged = false;
         try {
             stored = ed.commit()
                     && prefs.getBoolean(PREF_MARKER, false)
                     && code.equals(prefs.getString(PREF_UUID, ""))
                     && origin.equals(prefs.getString(PREF_ORIGIN, ""));
         } catch (RuntimeException e) {
+            logFailure("credential-store", e);
+            logged = true;
             stored = false;
         }
         if (!stored) {
             clearLogin(prefs);
+            if (!logged) {
+                logStep("credential-store");
+            }
             return false;
         }
         return true;
@@ -601,26 +745,28 @@ public final class Raspberry {
             ed.remove(PREF_ORIGIN);
             ed.putBoolean(PREF_MARKER, false);
             ed.commit();
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
             // a failed commit must not leave a login in memory
+            logFailure("credential-clear", e);
         }
     }
 
-    private static String postExchange(String ticket, String verifier) throws Exception {
-        if (!AuthUrl.ticket(ticket) || !AuthUrl.verifier(verifier) || endpoint == null) {
-            return null;
+    private static String postExchange(Attempt.Exchange exchange) throws Exception {
+        byte[] body = exchange.body();
+        if (body == null || body.length > 4096) {
+            if (body != null) {
+                Arrays.fill(body, (byte) 0);
+            }
+            throw new IOException();
         }
-        byte[] body = ("{\"ticket\":\"" + ticket + "\",\"verifier\":\"" + verifier + "\"}").getBytes(StandardCharsets.US_ASCII);
-        if (body.length > 4096) {
-            return null;
-        }
-        HttpURLConnection raw = (HttpURLConnection) new URL(AuthUrl.exchange(endpoint)).openConnection();
-        if (!(raw instanceof HttpsURLConnection)) {
-            raw.disconnect();
-            return null;
-        }
-        HttpsURLConnection conn = (HttpsURLConnection) raw;
+        HttpURLConnection raw = null;
+        byte[] response = null;
         try {
+            raw = (HttpURLConnection) new URL(AuthUrl.exchange(endpoint)).openConnection();
+            if (!(raw instanceof HttpsURLConnection)) {
+                throw new IOException();
+            }
+            HttpsURLConnection conn = (HttpsURLConnection) raw;
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(15000);
@@ -639,12 +785,22 @@ public final class Raspberry {
             int status = conn.getResponseCode();
             if (status != 200) {
                 discard(conn.getErrorStream());
-                return null;
+                throw new IOException();
             }
-            byte[] got = readCap(conn.getInputStream(), MAX_BODY, false);
-            return Json.uniqueCode(new String(got, StandardCharsets.UTF_8));
+            response = readCap(conn.getInputStream(), MAX_BODY, false);
+            String code = Json.uniqueCode(new String(response, StandardCharsets.UTF_8));
+            if (code == null) {
+                throw new IOException();
+            }
+            return code;
         } finally {
-            conn.disconnect();
+            Arrays.fill(body, (byte) 0);
+            if (response != null) {
+                Arrays.fill(response, (byte) 0);
+            }
+            if (raw != null) {
+                raw.disconnect();
+            }
         }
     }
 
@@ -744,6 +900,7 @@ public final class Raspberry {
             String line = new String(buf, 0, lineEnd, StandardCharsets.US_ASCII);
             return Callback.parseLine(line);
         } catch (Exception e) {
+            logFailure("callback-read", e);
             return null;
         }
     }
@@ -766,8 +923,9 @@ public final class Raspberry {
             out.write(head.getBytes(StandardCharsets.US_ASCII));
             out.write(body);
             out.flush();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             // the browser can fail; the attempt decision already happened
+            logFailure("callback-response", e);
         }
     }
 
@@ -782,8 +940,8 @@ public final class Raspberry {
             while (got < 1024 && (n = in.read(buf)) >= 0) {
                 got += n;
             }
-        } catch (Exception ignored) {
-            // ignore
+        } catch (Exception e) {
+            logFailure("exchange-error-body", e);
         }
     }
 
@@ -795,6 +953,7 @@ public final class Raspberry {
                 }
                 failed = true;
                 liveGen = 0;
+                attemptActivity = null;
                 setStatus("Sign-in failed. Tap Retry.");
                 bindButtons();
             }
@@ -811,6 +970,14 @@ public final class Raspberry {
         liveGen = 0;
         attemptActivity = null;
         cancelled = false;
+    }
+
+    private static void logFailure(String step, Exception error) {
+        Log.w("raspberry", "auth-step=" + step + " exception=" + error.getClass().getName());
+    }
+
+    private static void logStep(String step) {
+        Log.w("raspberry", "auth-step=" + step);
     }
 
     private static void setStatus(final String text) {

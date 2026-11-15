@@ -14,12 +14,14 @@ public final class CoreTest {
             return true;
         }
     };
+    private static final String VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
     public static void main(String[] args) {
         pkce();
         callback();
         attempt();
         attemptCompletion();
+        pendingExchange();
         rewrite();
         descriptor();
         turkishLocale();
@@ -91,25 +93,28 @@ public final class CoreTest {
         check(new Attempt().begin(repeat('a', 15), t0) == 0, "begin-short");
         check(a.begin(other, t0) == 0, "one-live");
         Callback wrong = Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other);
-        check(a.onCallback(gen, wrong, t0) == Attempt.IGNORE, "wrong-state");
+        check(onCallback(a, gen, wrong, t0) == Attempt.IGNORE, "wrong-state");
         check(a.live(gen, t0), "still-live");
-        check(a.onCallback(gen + 1, callback(ticket, state), t0) == Attempt.IGNORE, "other-gen");
+        check(onCallback(a, gen + 1, callback(ticket, state), t0) == Attempt.IGNORE, "other-gen");
         check(a.live(gen, t0), "gen-isolated");
-        check(a.onCallback(gen, callback(ticket, state), t0 + Attempt.LIMIT_NS) == Attempt.FAIL, "expiry");
+        check(onCallback(a, gen, callback(ticket, state), t0 + Attempt.LIMIT_NS) == Attempt.FAIL, "expiry");
         check(!a.live(gen, t0), "expired-dead");
         int gen2 = a.begin(state, t0);
-        check(a.onCallback(gen, callback(ticket, state), t0) == Attempt.IGNORE, "old-gen-after-restart");
-        check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.EXCHANGE, "exchange");
-        check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay");
+        check(onCallback(a, gen, callback(ticket, state), t0) == Attempt.IGNORE, "old-gen-after-restart");
+        check(onCallback(a, gen2, callback(ticket, state), t0) == Attempt.EXCHANGE, "exchange");
+        Attempt.Exchange exchange = a.claimExchange(gen2, t0, true);
+        check(exchange != null, "exchange-claimed");
+        check(onCallback(a, gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay");
         check(a.commit(gen2, t0, OK), "commit");
-        check(a.onCallback(gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay-done");
+        exchange.clear();
+        check(onCallback(a, gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay-done");
         int gen3 = a.begin(state, t0);
         Callback denied = Callback.parseTarget("/raspberry/cb?error=access_denied&state=" + state);
-        check(a.onCallback(gen3, denied, t0) == Attempt.FAIL, "error-fails");
-        check(a.onCallback(gen3, callback(ticket, state), t0) == Attempt.IGNORE, "no-auto-exchange");
+        check(onCallback(a, gen3, denied, t0) == Attempt.FAIL, "error-fails");
+        check(onCallback(a, gen3, callback(ticket, state), t0) == Attempt.IGNORE, "no-auto-exchange");
         int gen4 = a.begin(other, t0);
         a.cancel(gen4);
-        check(a.onCallback(gen4, Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other), t0) == Attempt.IGNORE, "cancel-ignores");
+        check(onCallback(a, gen4, Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other), t0) == Attempt.IGNORE, "cancel-ignores");
         check(a.begin(state, t0) != 0, "retry-after-cancel");
     }
 
@@ -133,26 +138,34 @@ public final class CoreTest {
         Attempt a = new Attempt();
         int g1 = a.begin(state, t0);
         check(!a.commit(g1, t0, count) && writes[0] == 0, "c-no-exchange-no-write");
-        check(a.onCallback(g1, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-exchange");
+        check(onCallback(a, g1, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-exchange");
+        check(!a.commit(g1, t0, count) && writes[0] == 0, "c-before-claim-no-write");
         a.cancel(g1);
         check(!a.commit(g1, t0, count) && writes[0] == 0, "c-cancel-no-write");
+        check(a.claimExchange(g1, t0, true) == null, "c-cancel-no-claim");
         check(!a.live(g1, t0), "c-cancel-dead");
 
         // A newer generation owns the store: the old completion writes nothing and does not
         // clear or consume the new attempt.
         int g2 = a.begin(state, t0);
         check(g2 != 0 && g2 != g1, "c-next-gen");
-        check(a.onCallback(g2, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-next-exchange");
+        check(onCallback(a, g2, callback(ticket, state), t0) == Attempt.EXCHANGE, "c-next-exchange");
+        Attempt.Exchange g2Exchange = a.claimExchange(g2, t0, true);
+        check(g2Exchange != null, "c-next-claim");
         check(!a.commit(g1, t0, count) && writes[0] == 0, "c-old-gen-no-write");
         check(a.commit(g2, t0, count) && writes[0] == 1, "c-new-gen-write");
         check(!a.commit(g2, t0, count) && writes[0] == 1, "c-done-no-rewrite");
+        g2Exchange.clear();
 
         // Accepted in time, stored after the deadline: refused.
         Attempt b = new Attempt();
         int g3 = b.begin(state, t0);
-        check(b.onCallback(g3, callback(ticket, state), t0 + Attempt.LIMIT_NS - 1) == Attempt.EXCHANGE, "x-exchange");
+        check(onCallback(b, g3, callback(ticket, state), t0 + Attempt.LIMIT_NS - 1) == Attempt.EXCHANGE, "x-exchange");
+        Attempt.Exchange g3Exchange = b.claimExchange(g3, t0 + Attempt.LIMIT_NS - 1, true);
+        check(g3Exchange != null, "x-claim");
         check(!b.commit(g3, t0 + Attempt.LIMIT_NS, count) && writes[0] == 1, "x-expired-no-write");
         check(!b.live(g3, t0 + Attempt.LIMIT_NS), "x-expired-dead");
+        g3Exchange.clear();
 
         // live() enforces the deadline itself.
         Attempt c = new Attempt();
@@ -164,13 +177,120 @@ public final class CoreTest {
         // A throwing writer fails the attempt instead of reporting success.
         Attempt d = new Attempt();
         int g5 = d.begin(state, t0);
-        check(d.onCallback(g5, callback(ticket, state), t0) == Attempt.EXCHANGE, "t-exchange");
+        check(onCallback(d, g5, callback(ticket, state), t0) == Attempt.EXCHANGE, "t-exchange");
+        Attempt.Exchange g5Exchange = d.claimExchange(g5, t0, true);
+        check(g5Exchange != null, "t-claim");
         boolean failedClosed = !d.commit(g5, t0, new Attempt.Writer() {
             public boolean write() {
                 throw new IllegalStateException("write");
             }
         });
         check(failedClosed && !d.live(g5, t0), "t-throwing-fails");
+        g5Exchange.clear();
+    }
+
+    private static void pendingExchange() {
+        String state = "abcdefghij123456";
+        String ticket = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        long t0 = 5_000L;
+
+        // Callback arrives while backgrounded; retain it until the foreground gate claims it.
+        Attempt a = new Attempt();
+        int g1 = a.begin(state, t0);
+        long received = t0 + 10;
+        Callback cb = callback(ticket, state);
+        Callback duplicate = callback(repeat('B', 43), state);
+        check(onCallback(a, g1, cb, received) == Attempt.EXCHANGE, "p-stage");
+        check(a.pending(g1), "p-pending");
+        check(onCallback(a, g1, duplicate, received) == Attempt.IGNORE, "p-duplicate-pending");
+        check(a.live(g1, received + 60_000_000_000L), "p-live-in-background");
+        check(a.claimExchange(g1, received + 60_000_000_000L, false) == null, "p-background-no-claim");
+        check(a.pending(g1), "p-background-retains");
+        Attempt.Exchange queued = a.claimExchange(g1, received + 60_000_000_000L, true);
+        check(queued != null, "p-foreground-claim");
+        Attempt.Exchange once = a.claimExchange(g1, received + 60_000_000_000L, true);
+        check(once == null, "p-only-one-claim");
+        check(onCallback(a, g1, duplicate, received + 60_000_000_000L) == Attempt.IGNORE, "p-duplicate-after-claim");
+        check(a.exchanging(g1), "p-exchanging");
+        if (queued != null) {
+            byte[] body = queued.body();
+            check(body != null && new String(body).contains(ticket) && new String(body).contains(VERIFIER), "p-exchange-body");
+            queued.clear();
+            check(queued.body() == null, "p-clear");
+            check(allZero(body), "p-body-erased");
+        }
+
+        // Simulates the activity already being resumed when the callback is accepted.
+        Attempt b = new Attempt();
+        int g2 = b.begin(state, t0);
+        check(onCallback(b, g2, cb, received) == Attempt.EXCHANGE, "f-stage");
+        Attempt.Exchange immediate = b.claimExchange(g2, received, true);
+        check(immediate != null && b.claimExchange(g2, received, true) == null, "f-one-exchange");
+        if (immediate != null) {
+            immediate.clear();
+        }
+
+        // Ticket TTL starts at callback receipt and is capped by the original attempt deadline.
+        Attempt expired = new Attempt();
+        int g3 = expired.begin(state, t0);
+        check(onCallback(expired, g3, cb, received) == Attempt.EXCHANGE, "e-stage");
+        check(expired.claimExchange(g3, received + Attempt.TICKET_LIMIT_NS, false) == null, "e-ticket-expired");
+        check(!expired.live(g3, received + Attempt.TICKET_LIMIT_NS), "e-dead");
+        check(expired.begin(state, received + Attempt.TICKET_LIMIT_NS) != 0, "e-retry");
+
+        Attempt capped = new Attempt();
+        int g4 = capped.begin(state, t0);
+        long nearAttemptDeadline = t0 + Attempt.LIMIT_NS - 1;
+        check(onCallback(capped, g4, cb, nearAttemptDeadline) == Attempt.EXCHANGE, "e-attempt-stage");
+        check(capped.claimExchange(g4, t0 + Attempt.LIMIT_NS, true) == null, "e-attempt-caps-ticket");
+
+        // Cancellation/retry and stale generations erase queued data and cannot claim or commit.
+        Attempt stale = new Attempt();
+        int g5 = stale.begin(state, t0);
+        check(onCallback(stale, g5, cb, received) == Attempt.EXCHANGE, "s-stage");
+        stale.cancel(g5);
+        int g6 = stale.begin(state, received);
+        check(stale.claimExchange(g5, received, true) == null, "s-cancel-clears-ticket");
+        check(onCallback(stale, g5, cb, received) == Attempt.IGNORE, "s-old-callback");
+        check(onCallback(stale, g6, cb, received) == Attempt.EXCHANGE, "s-new-stage");
+        Attempt.Exchange current = stale.claimExchange(g6, received, true);
+        check(current != null, "s-new-claim");
+        byte[] currentBody = current == null ? null : current.body();
+        stale.cancel(g6);
+        check(current != null && current.body() == null && allZero(currentBody), "s-cancel-erases-active");
+        int[] writes = {0};
+        check(!stale.commit(g6, received, new Attempt.Writer() {
+            public boolean write() {
+                writes[0]++;
+                return true;
+            }
+        }) && writes[0] == 0, "s-cancel-no-store");
+        check(!stale.commit(g5, received, new Attempt.Writer() {
+            public boolean write() {
+                writes[0]++;
+                return true;
+            }
+        }) && writes[0] == 0, "s-stale-no-store");
+        if (current != null) {
+            current.clear();
+        }
+
+        // The callback TTL still applies after claim; an expired exchange cannot write.
+        Attempt inFlight = new Attempt();
+        int g7 = inFlight.begin(state, t0);
+        long inFlightReceived = t0 + 1;
+        check(onCallback(inFlight, g7, cb, inFlightReceived) == Attempt.EXCHANGE, "x-inflight-stage");
+        Attempt.Exchange inFlightExchange = inFlight.claimExchange(g7, inFlightReceived, true);
+        check(inFlightExchange != null, "x-inflight-claim");
+        byte[] inFlightBody = inFlightExchange == null ? null : inFlightExchange.body();
+        int[] expiredWrites = {0};
+        check(!inFlight.commit(g7, inFlightReceived + Attempt.TICKET_LIMIT_NS, new Attempt.Writer() {
+            public boolean write() {
+                expiredWrites[0]++;
+                return true;
+            }
+        }) && expiredWrites[0] == 0, "x-inflight-ticket-expired-no-write");
+        check(inFlightExchange != null && inFlightExchange.body() == null && allZero(inFlightBody), "x-inflight-ticket-erased");
     }
 
     private static void rewrite() {
@@ -338,6 +458,22 @@ public final class CoreTest {
 
     private static Callback callback(String ticket, String state) {
         return Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + state);
+    }
+
+    private static int onCallback(Attempt attempt, int gen, Callback callback, long now) {
+        return attempt.onCallback(gen, callback, VERIFIER, now);
+    }
+
+    private static boolean allZero(byte[] bytes) {
+        if (bytes == null) {
+            return false;
+        }
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean same(String raw, Descriptor d) {

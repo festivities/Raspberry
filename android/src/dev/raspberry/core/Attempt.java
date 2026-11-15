@@ -6,6 +6,7 @@ package dev.raspberry.core;
  */
 public final class Attempt {
     public static final long LIMIT_NS = 600_000_000_000L;
+    public static final long TICKET_LIMIT_NS = 120_000_000_000L;
 
     public static final int IGNORE = 0;
     public static final int EXCHANGE = 1;
@@ -18,30 +19,74 @@ public final class Attempt {
 
     private static final int IDLE = 0;
     private static final int LIVE = 1;
-    private static final int EXCHANGING = 2;
-    private static final int DONE = 3;
-    private static final int FAILED = 4;
+    private static final int PENDING = 2;
+    private static final int EXCHANGING = 3;
+    private static final int DONE = 4;
+    private static final int FAILED = 5;
 
     private int gen;
     private int phase = IDLE;
     private String state;
+    private String ticket;
+    private String verifier;
     private long deadline;
+    private long ticketDeadline;
+    private Exchange activeExchange;
+
+    /** Short-lived in-memory exchange input. Clear it as soon as the request finishes or cancels. */
+    public static final class Exchange {
+        private String ticket;
+        private String verifier;
+        private byte[] body;
+
+        private Exchange(String ticket, String verifier) {
+            this.ticket = ticket;
+            this.verifier = verifier;
+        }
+
+        public synchronized byte[] body() {
+            if (ticket == null || verifier == null
+                    || !AuthUrl.ticket(ticket) || !AuthUrl.verifier(verifier)) {
+                return null;
+            }
+            if (body == null) {
+                body = ("{\"ticket\":\"" + ticket + "\",\"verifier\":\"" + verifier + "\"}")
+                        .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            }
+            return body;
+        }
+
+        public synchronized void clear() {
+            ticket = null;
+            verifier = null;
+            if (body != null) {
+                java.util.Arrays.fill(body, (byte) 0);
+                body = null;
+            }
+        }
+    }
 
     public synchronized int begin(String state, long now) {
         if (!AuthUrl.state(state)) {
             return 0;
         }
-        if (phase == LIVE || phase == EXCHANGING) {
-            return 0;
+        if (phase == LIVE || phase == PENDING || phase == EXCHANGING) {
+            if (now < deadline && (phase != PENDING || now < ticketDeadline)) {
+                return 0;
+            }
+            failLocked();
         }
         this.gen++;
         this.phase = LIVE;
         this.state = state;
+        this.ticket = null;
+        this.verifier = null;
         this.deadline = now + LIMIT_NS;
+        this.ticketDeadline = 0;
         return this.gen;
     }
 
-    public synchronized int onCallback(int gen, Callback cb, long now) {
+    public synchronized int onCallback(int gen, Callback cb, String verifier, long now) {
         if (cb == null || gen != this.gen || phase != LIVE) {
             return IGNORE;
         }
@@ -59,9 +104,43 @@ public final class Attempt {
         if (cb.ticket == null) {
             return IGNORE;
         }
-        phase = EXCHANGING;
+        if (!AuthUrl.ticket(cb.ticket) || !AuthUrl.verifier(verifier)) {
+            return IGNORE;
+        }
+        phase = PENDING;
         this.state = null;
+        this.ticket = cb.ticket;
+        this.verifier = verifier;
+        this.ticketDeadline = Math.min(deadline, now + TICKET_LIMIT_NS);
         return EXCHANGE;
+    }
+
+    /** Claims a validated ticket once, only while both its ticket and attempt deadlines are live. */
+    public synchronized Exchange claimExchange(int gen, long now, boolean ownerForeground) {
+        if (gen != this.gen || phase != PENDING) {
+            return null;
+        }
+        if (now >= deadline || now >= ticketDeadline) {
+            failLocked();
+            return null;
+        }
+        if (!ownerForeground) {
+            return null;
+        }
+        phase = EXCHANGING;
+        Exchange exchange = new Exchange(ticket, verifier);
+        activeExchange = exchange;
+        ticket = null;
+        verifier = null;
+        return exchange;
+    }
+
+    public synchronized boolean pending(int gen) {
+        return gen == this.gen && phase == PENDING;
+    }
+
+    public synchronized boolean exchanging(int gen) {
+        return gen == this.gen && phase == EXCHANGING;
     }
 
     public synchronized void fail(int gen) {
@@ -83,10 +162,10 @@ public final class Attempt {
      * past its deadline is failed here, so no live phase outlives it and a retry can begin.
      */
     public synchronized boolean live(int gen, long now) {
-        if (gen != this.gen || (phase != LIVE && phase != EXCHANGING)) {
+        if (gen != this.gen || (phase != LIVE && phase != PENDING && phase != EXCHANGING)) {
             return false;
         }
-        if (now >= deadline) {
+        if (now >= deadline || (phase == PENDING && now >= ticketDeadline)) {
             failLocked();
             return false;
         }
@@ -102,7 +181,7 @@ public final class Attempt {
         if (writer == null || gen != this.gen || phase != EXCHANGING) {
             return false;
         }
-        if (now >= deadline) {
+        if (now >= deadline || now >= ticketDeadline) {
             failLocked();
             return false;
         }
@@ -115,6 +194,7 @@ public final class Attempt {
         if (ok) {
             phase = DONE;
             state = null;
+            clearExchangeLocked();
         } else {
             failLocked();
         }
@@ -124,6 +204,17 @@ public final class Attempt {
     private void failLocked() {
         phase = FAILED;
         state = null;
+        ticket = null;
+        verifier = null;
+        ticketDeadline = 0;
+        clearExchangeLocked();
+    }
+
+    private void clearExchangeLocked() {
+        if (activeExchange != null) {
+            activeExchange.clear();
+            activeExchange = null;
+        }
     }
 
     static boolean eq(String a, String b) {
