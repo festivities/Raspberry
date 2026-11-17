@@ -61,7 +61,7 @@ Never use global host Python for this project. Create a repository-local `.venv`
 
 User-approved Go 1.27.4 (darwin/arm64) is installed at the standard **`/usr/local/go`** location, owned by root/wheel and available through `~/.zshrc`'s `/usr/local/go/bin` PATH entry. It was initially installed in a Raspberry-named user tools directory, then moved with the user's administrator approval; the old Go directory is gone. A new interactive zsh reports Go 1.27.4 and `GOROOT=/usr/local/go`. The [official archive](https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz), 68,231,011 bytes, matched upstream SHA-256 `91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4` before extraction. The host gate sets `GOTOOLCHAIN=local` to prevent automatic toolchain downloads. No unrelated shell configuration was changed.
 
-Run `bash scripts/gate.sh` with Go, `gofmt`, Git and a C compiler on the process PATH (`CC` may select the compiler). This is the Bash counterpart to the Windows host gate, not an Android/iOS SDK build or device-acceptance test. It runs formatting, vet, Go tests, native host tests and repository-hygiene checks. Native executables and synthetic index fixtures are created in private temporary directories, not in the repository.
+Run `bash scripts/gate.sh` with Go, `gofmt`, Git and a C compiler on the process PATH (`CC` may select the compiler). This is the Bash counterpart to the Windows host gate, not an Android/iOS SDK build or device-acceptance test. It runs formatting, vet, Go tests, native host tests, macOS Foundation core tests and repository-hygiene checks. Native executables and synthetic index fixtures are created in private temporary directories, not in the repository.
 
 The index-only hygiene check and its synthetic regressions can run independently:
 
@@ -71,6 +71,8 @@ bash scripts/check-repo.sh
 ```
 
 Existing Xcode 27.2 provides an iPhoneOS 27.2 SDK and Apple clang/signing tools on the November 17 macOS host; no additional iOS SDK installation is currently needed. Avoid `simctl` for this vphone workflow: an inventory call unexpectedly triggered a CoreSimulator service replacement on first use. This did not establish that an iOS simulator runtime was installed. Use `vphone-launchpad-cli` for the existing virtual iPhone; see [ios.md](ios.md) for the runtime-evidence limits.
+
+`bash scripts/test-ios-core.sh` independently runs the side-effect-free Foundation endpoint tests on macOS. It compiles the shared host-validation code as C and the Objective-C wrapper with ARC and strict warnings, using only canonical private temporary directories. This module has also been compiled for arm64 iOS 15, but is not yet linked into the deployed logging-only probe.
 
 ### Experimental iOS loader probe
 

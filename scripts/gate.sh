@@ -83,6 +83,11 @@ else
     done
 fi
 
+if [ "$(uname -s)" = Darwin ] && [ -f "$root/ios/RBEndpoint.m" ]; then
+    printf 'gate: iOS Foundation core tests\n'
+    bash "$here/test-ios-core.sh" || fail 'iOS Foundation core tests failed'
+fi
+
 [ -f "$here/check-repo.sh" ] || fail "missing $here/check-repo.sh"
 printf 'gate: check-repo test\n'
 bash "$here/check-repo_test.sh" || fail 'check-repo test failed'
