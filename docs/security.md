@@ -2,7 +2,9 @@
 
 Raspberry patches a player's own, hash-checked LINE PLAY 10.1.0.0 APK. It does not distribute the game, store Discord passwords or embed an operator's secrets. The endpoint is operator configuration, not a secret.
 
-The iOS 10.1.0 IPA is not supported by the patcher; further investigation is deferred until Android acceptance. Prior static work located AirArmor-related signature/debugger checks, but weaker enforcement, a safe compatibility patch and its native TLS policy are not established. See [ios.md](ios.md); do not transfer Android's findings to iOS by assumption.
+The iOS 10.1.0 IPA is under active, separate assessment; the inspector and logging-only loader probe are not a complete patcher. Static review found the same abnormal AirArmor state set and disabled verification in the inspected native CurlWrapper, not weaker enforcement or permission to alter protection behavior. Apple networking retains a separate trust boundary. See [ios.md](ios.md).
+
+For iOS, never replace the shared device UUID with a Discord credential: it also feeds telemetry and cookie/request state. A narrower guest-auth argument is under investigation. The stock URL callback logs complete URLs before forwarding to SDKs, so confidential auth callbacks must be intercepted before that path. No deployed iOS auth gate, credential storage policy or routing acceptance is established.
 
 ## Required checks
 

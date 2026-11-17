@@ -72,7 +72,7 @@ bash scripts/check-repo.sh
 
 Existing Xcode 27.2 provides an iPhoneOS 27.2 SDK and Apple clang/signing tools on the November 17 macOS host; no additional iOS SDK installation is currently needed. Avoid `simctl` for this vphone workflow: an inventory call unexpectedly triggered a CoreSimulator service replacement on first use. This did not establish that an iOS simulator runtime was installed. Use `vphone-launchpad-cli` for the existing virtual iPhone; see [ios.md](ios.md) for the runtime-evidence limits.
 
-`bash scripts/test-ios-core.sh` independently runs the side-effect-free Foundation endpoint tests on macOS. It compiles the shared host-validation code as C and the Objective-C wrapper with ARC and strict warnings, using only canonical private temporary directories. This module has also been compiled for arm64 iOS 15, but is not yet linked into the deployed logging-only probe.
+`bash scripts/test-ios-core.sh` independently runs the side-effect-free Foundation endpoint and auth-attempt tests on macOS. It compiles the shared host-validation code as C and the Objective-C modules with ARC and strict warnings, using only canonical private temporary directories. Auth tests link the installed Security framework for CSPRNG generation and bound their concurrency waits. These modules have also been compiled for arm64 iOS 15, but are not linked into the deployed logging-only probe.
 
 ### Experimental iOS loader probe
 

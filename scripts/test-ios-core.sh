@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-only tests for the pure Foundation endpoint core.
+# Host-only tests for the pure Foundation endpoint and auth-attempt cores.
 # Compiles endpoint.c as C, then links its object with Objective-C sources.
 set -eu
 
@@ -42,3 +42,11 @@ clang -fobjc-arc -Wall -Wextra -Werror \
     -o "$tmp/endpoint_test" || fail 'compile Foundation endpoint tests'
 
 "$tmp/endpoint_test" || fail 'endpoint tests failed'
+
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" "$root/ios/auth_attempt_test.m" "$tmp/endpoint.o" \
+    -framework Foundation -framework Security \
+    -o "$tmp/auth_attempt_test" || fail 'compile Foundation auth-attempt tests'
+
+"$tmp/auth_attempt_test" || fail 'auth-attempt tests failed'
