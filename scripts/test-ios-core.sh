@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Host-only tests for the pure-C image selector and Foundation endpoint/auth cores.
-# Compiles pure C sources, then links the endpoint object with Objective-C sources.
+# Host-only tests for pure-C image selection and Foundation endpoint/auth/URL cores.
+# Compiles pure C sources, then links their objects with Objective-C sources.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || {
@@ -49,6 +49,15 @@ clang -fobjc-arc -Wall -Wextra -Werror \
     -o "$tmp/endpoint_test" || fail 'compile Foundation endpoint tests'
 
 "$tmp/endpoint_test" || fail 'endpoint tests failed'
+
+clang -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBURLRewrite.m" \
+    "$root/ios/url_rewrite_test.m" "$tmp/endpoint.o" \
+    -framework Foundation \
+    -o "$tmp/url_rewrite_test" || fail 'compile Foundation URL-rewrite tests'
+
+"$tmp/url_rewrite_test" || fail 'URL-rewrite tests failed'
 
 clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \

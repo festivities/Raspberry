@@ -74,7 +74,7 @@ Existing Xcode 27.2 provides an iPhoneOS 27.2 SDK and Apple clang/signing tools 
 
 `bash scripts/test-ios-core.sh` independently runs Foundation endpoint, auth-attempt and exchange-client tests on macOS. It compiles the shared host-validation code as C and the Objective-C modules with ARC and strict warnings, using only canonical private temporary directories. Auth tests link the installed Security framework for CSPRNG generation and bound their concurrency waits. Exchange tests inject a test-only `NSURLProtocol` that intercepts every request: no live network, browser, credential storage or device is used. These modules have also been compiled for arm64 iOS 15, but are not linked into the deployed diagnostic probe.
 
-The core-test script also checks synthetic executable-image selection for the separate enqueue diagnostic. `bash scripts/build-ios-enqueue-probe.sh <private-output.dylib>` builds that own passthrough payload with the installed SDK; it does not sign, package or install it. This is not the default loader build or a user-facing IPA patch command. See [patches.md](patches.md) for its fixed write windows and bounded virtual-guest evidence.
+The core-test script also checks synthetic executable-image selection for the separate enqueue diagnostic and the pure Foundation URL-authority rewriter (no network requests). `bash scripts/build-ios-enqueue-probe.sh <private-output.dylib>` builds that own passthrough payload with the installed SDK; it does not sign, package or install it. This is not the default loader build or a user-facing IPA patch command. See [patches.md](patches.md) for its fixed write windows and bounded virtual-guest evidence.
 
 ### Experimental iOS loader probe
 
