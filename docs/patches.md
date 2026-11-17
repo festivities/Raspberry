@@ -90,4 +90,16 @@ The SDK can retain still-valid old notices after a successful response, so routi
 
 **Risk:** early AirArmor user-ID registration happens before the startup runnable. If an absent UUID causes a failure, defer the real registration until authentication and preserve its result handling; do not suppress state 1 or unrelated protection checks. Automatic guest-transport entry after Discord also needs a verified engine-thread integration point.
 
+## Experimental iOS loader probe
+
+This separate developer probe is **not** a complete iOS patch and is not exposed by `raspberry patch`. The public iOS CLI command remains read-only `ipa inspect`.
+
+- **Target:** locked IPA SHA-256 `987fefccfc235cc73fdd6363c064887272575586f334b45fcb10d213a8772532`; main executable 40,969,408 bytes, SHA-256 `e4029164cb6cbf80dee7b17250ca706bfbab9f218436f007bbbbcbc8baf20141`.
+- **Change:** increment `ncmds` 76→77 and `sizeofcmds` 8,248→8,320 (header bytes `[16,24)`); insert one 72-byte `LC_LOAD_DYLIB` at file offset 8,280 for `@executable_path/Frameworks/libraspberry.dylib`. No section/segment is shifted. The first file-backed section starts at 21,852, leaving 13,572 bytes of verified zero header slack.
+- **Own payload:** add Raspberry's dylib under the app's `Frameworks/` directory. Its constructor emits only fixed `raspberry-ios loader-ready`; it does not hook networking, authentication, protection or UI.
+- **Why:** establish that our native code can load before implementing the compatibility changes.
+- **Guards/tests:** exact input size/hash; thin arm64 executable and decrypted encryption command; validated load/segment/section ranges; duplicate-dependency, insufficient/nonzero-slack refusal; no input mutation; exact allowed-write windows. Synthetic tests include file-backed segments without sections. Main ran the locked-binary test, full host gate and race suite. Two dylib builds and two private probe packages were byte-identical; retained archive payloads stayed compressed byte-for-byte.
+- **Runtime [V, bounded]:** vphoned upgraded the existing app without uninstalling it, preserving bundle/data-container identities. The app launched and a capture armed before launch observed the fixed constructor marker. Main checked screenshots, one installed loader dependency with expected command counts, and unchanged installed `__TEXT`/`__DATA` bodies against the baseline (excluding the modified header). No AA error or reported crash appeared; no account/consent/avatar action was taken.
+- **Risk/limits:** header changes invalidate the old signature. Private probe signatures are handled by vphoned, not a normal signing/provisioning pipeline. A late log capture initially missed the constructor, and the guest has no spawnable `log` tool; a live vphoned unified-log capture subsequently confirmed it without installing tools. No iOS protection predicate was changed. Routing, Discord, cache migration, ordinary installation, physical-device and gameplay acceptance remain open.
+
 See [security.md](security.md) for the stock native TLS limitation. These edits do not provide authenticated native transport.

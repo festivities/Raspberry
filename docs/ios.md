@@ -1,8 +1,8 @@
 # iOS compatibility assessment
 
-The initial static assessment of the supplied decrypted LINE PLAY 10.1.0 IPA is complete, with the unresolved questions below. Raspberry's CLI still accepts only its locked Android APK; it does not patch or sign IPAs. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
+Raspberry can inspect the supplied decrypted LINE PLAY 10.1.0 IPA read-only; iOS patching/signing is not yet implemented in the CLI. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
 
-No iOS runtime is available (user, 2026-11-12). Static results cannot establish that re-signing, AirArmor, login, networking or gameplay works on a device.
+The original November 12 assessment was static-only. On November 17 the user supplied a macOS/vphone environment and authorized autonomous iOS work, superseding the earlier deferral. Static results still cannot establish that re-signing, AirArmor, login, networking or gameplay works on a device.
 
 ## Static findings (2026-11-12)
 
@@ -13,11 +13,55 @@ No iOS runtime is available (user, 2026-11-12). Static results cannot establish 
 - **[S] State 6 has a message path:** `sub_1010A09BC` calls `sub_1010A0AF0`, which builds localized text containing `[AA-006]` and submits a generic message through `sub_1001F9A24`. It does not enter the later inspected `CNaCheatingBlockPopup` branch. That named branch's absence does not mean the generic message is harmless.
 - **[?] Final effect remains unresolved:** the concrete handler behind the generic message dispatch has not been recovered. Whether a legitimate re-sign triggers event 6, and whether `[AA-006]` becomes visible or blocks gameplay, need further evidence. A verifier skip predicate tests a global for null; no platform-specific PlayCover exemption was identified.
 
-**Comparison:** the inspected iOS build has signature verification, event dispatch and the same abnormal-state classification as Android. There is no evidence here that it has weaker AirArmor enforcement. No iOS compatibility byte patch is justified at this checkpoint. Keep the Android state-6 patch Android-only; establish the actual iOS message effect and whether a legitimate re-sign triggers a blocker first.
+**Comparison:** the inspected iOS build has signature verification, event dispatch and the same abnormal-state classification as Android. There is no evidence here that it has weaker AirArmor enforcement. Keep the Android state-6 patch Android-only; establish whether legitimate re-signing triggers an iOS blocker before shipping a corresponding compatibility edit.
+
+### Main-reviewed follow-up (2026-11-17)
+
+- **[S] Dialog path:** the abnormal-state consumer submits localized `[AA-006]` text through the common-message path to `NaCommonDialog`. Its final dismissal/repeat behavior and actual gameplay-blocking effect remain unverified. The inspected construction/submission path does not itself establish a process exit.
+- **[S] Correct latch semantics:** the setter accepts a new event when the previous state is normal, including unsigned values above 10. It retains the first abnormal state. Lifecycle state-1 writes occur only when the respective protection-SDK lifecycle call returns nonzero; background/foreground transitions do not unconditionally force state 1.
+- **[S/I] Patch design constraint:** both display and latch predicates use mask `0x672`. Clearing state 6 only in the display predicate would leave state 6 latched, potentially preventing subsequent unrelated abnormal events from being stored. The earlier single-site/optional-latch suggestion is therefore not an accepted compatibility design. No iOS byte patch has been applied.
+- **[S] Identity:** the stock device-UUID getter is backed by the keychain, not Android's preference key. An iOS pre-engine authentication gate/getter substitution needs a separate design; do not edit existing keychain credentials or port Android's storage assumptions blindly.
 
 Network/crypto imports, WebKit linkage and permissive ATS settings were inventoried, but actual game/login/WebView call paths and TLS verification were not traced. Android's disabled native certificate verification must not be assumed to apply to iOS.
 
-## Later macOS testing
+## macOS/vphone baseline (2026-11-17)
+
+- **[V] Archive:** the supplied IPA's SHA-256 still matches the baseline above. Extraction is confined to private scratch outside the repository and archive.
+- **[V host] Inspector:** `raspberry ipa inspect --ipa <file>` verifies the exact archive before ZIP/Mach-O parsing and reads from the same immutable in-memory snapshot it hashes. Main tested it on the supplied archive: main executable 40,969,408 bytes, SHA-256 `e4029164cb6cbf80dee7b17250ca706bfbab9f218436f007bbbbcbc8baf20141`, arm64 device executable, `cryptid=0`, SDK 16.2, Mach-O minimum iOS 12.0. The package's minimum remains iOS 15.0. Metadata only; no extraction, signing or mutation. Synthetic safety regressions and the full macOS host gate/race suite pass.
+- **[V] Signature check:** Apple's `codesign --verify --deep --strict` rejects the extracted baseline with an invalid-signature result for arm64. This does not identify the app's eventual AirArmor event or establish a signing solution.
+- **[V] Runtime available:** the existing `myphone` virtual iPhone booted through `vphone-launchpad-cli`, using Core Bundle 2.17.1 and iOS 27.0.1. No new machine, bootstrap, host-security change or tool installation was required. The first `status` call immediately after starting Launchpad reported zero machines; `vm list` subsequently identified the existing guest.
+- **[V, bounded launch] Baseline smoke:** the game was absent, so vphoned installed/re-signed the unpatched IPA as a user app. It launched with verified foreground ownership and reached the language-selection screen. Notifications and tracking were denied; no account, legal consent or avatar action was taken. Main inspected the final screenshot. The filtered crash list was empty and no AA error was visible during this window. This does not establish whether event 6 occurs later, whether it blocks gameplay, or how a conventionally provisioned copy behaves.
+- **[V, bounded follow-up] Language Continue:** English was highlighted and Continue tapped once. The next screen displayed a Korean service-closure/refund notice over the avatar-introduction scene. Main inspected the screenshot; no AA error was visible and the filtered crash list was again empty. No notice link, legal consent, login or avatar choice was taken in this check. This is an unredirected baseline, not endpoint/authentication acceptance.
+- **[V, bounded dismissal] Notice Close:** the tester tapped only the notice's Close button. The notice dismissed and the avatar-introduction screen remained stable; main inspected the screenshot. No avatar-introduction choice was taken, and no AA error or reported crash appeared. This is not notice-routing acceptance.
+- **[V, native loader probe]** a logging-only own dylib was added through the guarded header preparation described in [patches.md](patches.md). Vphoned upgraded the installed app without an uninstall and preserved its bundle/data-container identities. It launched to the known closure notice; no game taps were made. A live unified-log capture started before a subsequent launch observed `raspberry-ios loader-ready`. Main verified the raw marker, screenshot and installed loader command, plus unchanged `__TEXT`/`__DATA` bodies outside the header. Filtered crash lists remained empty and no AA error appeared in these bounded runs. No routing/auth/protection edits or new tools were needed.
+- **Test boundary:** a vphoned `apps.install` smoke test re-signs/registers the app itself and bypasses installd/provisioning checks. Any resulting launch is virtual-guest runtime evidence, not ordinary IPA installation or physical-iPhone acceptance. PlayCover is not needed for this environment.
+- **Tool approval:** ask before every tool installation. Host Python, if needed, must use the repository-local `.venv`, including standard-library work; do not use global Python. IDAPython runs inside IDA.
+
+## Routing/auth design findings (2026-11-17)
+
+- **[S] Native stack:** static libcurl and LPN use the main executable's shared libSystem resolver/socket imports. Main reviewed `getaddrinfo`, `gethostbyname` and `connect` stubs plus the LPN resolver's numeric-address handoff. Marker attribution remains the candidate design, not runtime-proven iOS support. Connected TCP `send` has no destination-address argument and does not need replacement for the observed address-remapping path; the Android hook set must not be copied blindly.
+- **[S] TLS split:** the inspected game CurlWrapper sets peer/hostname verification options 64/81 to zero. The notice request helper instead uses synchronous `NSURLConnection`. Do not disable Apple trust or assume every stack shares curl's behavior. Actual certificate/protocol/cipher acceptance remains a device test.
+- **[S/I] Notice seam:** `LCHTTPRequestCenter` builds the production API base from `https://lan3rd.line.me/` plus `v1/`, yielding `/v1/lineplay/ios`. Authority rewrite is feasible at its URL/request helpers, but redirects, image/board requests and origin-bound cache migration still need a complete design. No blanket notice suppression or whole-cache deletion is justified.
+- **[S] Early UUID cache:** the stock keychain-backed getter feeds a native cache already used during app launch for logging. A Discord gate must precede that use or deliberately defer the relevant initialization; completing OAuth after engine startup is not a safe substitution strategy.
+- **Server coordination:** Cherry's current read-only server contract is `/Users/festivity/dev/Cherry/.agents/CONTRACT.md` on this Mac. It already permits exact `raspberry://auth` and requests the iOS platform/store route spellings, plain-HTTP paths and asset-dataset differences. Those need static/runtime evidence before declaring compatibility; no server changes have been made by Raspberry.
+
+### Main-reviewed iOS protocol differences
+
+These are static URL-builder findings, not a network capture:
+
+| Purpose | iOS path/token |
+| --- | --- |
+| Game sublist | `/v4/home/sublist/game/iPhone` |
+| Shop sublist | `/v4/home/sublist/shop/10.1.0/iPhone.nhn?parentIconId=…` |
+| Tips | `/v4/cherrytip/list/10.1.0/iPhone` |
+| LAN notices | `/v1/lineplay/ios` |
+| First-run manifest | `/img/read/notice/ios/checkresource2.json` over the stock plain-HTTP static-image base |
+
+The native builders obtain version `10.1.0` from `CFBundleShortVersionString`; build `10.1.0.0` is not interchangeable. The native platform token `iPhone` and manifest/LAN token `ios` are also distinct. The manifest folder difference alone does not establish asset-file or format compatibility with Cherry's Android dataset. First-run requests and resource validation still need an isolated-peer capture.
+
+Main also reviewed the native credential path construction: `avcookie.na` belongs under this app's `NSCachesDirectory` (`Library/Caches`), not Android's `files/`. Future fresh-auth cleanup must be limited to that exact file; no cookie contents have been read. The inspected session-failure path conditionally deletes it when an internal result differs from 3001; the exact HTTP-status mapping remains unresolved.
+
+## Other runtime/signing paths (historical prerequisites)
 
 - **Apple Silicon Mac:** needed for [PlayCover](https://docs.playcover.io/getting_started/download_playcover.html). It runs device apps through a wrapper, not a conventional iOS emulator. It is a possible launch/rendering smoke-test environment, not evidence of iPhone AirArmor behavior. LINE PLAY compatibility is untested.
 - **Xcode and Command Line Tools:** provide the Apple SDK/build tools for Raspberry's own native code, plus LLDB, `codesign`, `otool` and device/crash-log tooling. Xcode's Simulator requires simulator-targeted binaries; a decrypted device IPA is not directly a Simulator build, even when both use arm64 ([Apple TN3117](https://developer.apple.com/documentation/technotes/tn3117-resolving-build-errors-for-apple-silicon)).

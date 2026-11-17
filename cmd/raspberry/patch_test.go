@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+// tempDir returns a symlink-free fixture directory. t.TempDir() inherits the
+// macOS /var -> /private/var alias, which the fail-closed path checks reject by
+// design. Tests canonicalize their own fixtures rather than weakening those
+// checks for real user-supplied paths.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonical temp dir: %v", err)
+	}
+	return dir
+}
+
 func TestPortMapSet(t *testing.T) {
 	m := portMap{}
 	for _, s := range []string{"80=8080", "443=8443", "10000=10000", "10123=443"} {
@@ -68,7 +81,7 @@ func TestPinAsset(t *testing.T) {
 }
 
 func TestCheckClasspath(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := checkClasspath(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +96,7 @@ func TestCheckClasspath(t *testing.T) {
 }
 
 func TestPatchUsage(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	apk := filepath.Join(dir, "in.apk")
 	if err := os.WriteFile(apk, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -114,7 +127,7 @@ func TestPatchUsage(t *testing.T) {
 }
 
 func TestPatchWrongBaseline(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	apk := filepath.Join(dir, "synthetic.bin")
 	if err := os.WriteFile(apk, []byte("not-the-baseline"), 0o600); err != nil {
 		t.Fatal(err)
@@ -141,7 +154,7 @@ func TestPatchWrongBaseline(t *testing.T) {
 }
 
 func TestPatchRefusesRepo(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	apk := filepath.Join(dir, "synthetic.bin")
 	if err := os.WriteFile(apk, []byte("not-the-baseline"), 0o600); err != nil {
 		t.Fatal(err)
@@ -203,14 +216,14 @@ func TestOutsideWorktreeRoot(t *testing.T) {
 			t.Fatalf("%s child accepted", kind)
 		}
 	}
-	ok := t.TempDir()
+	ok := tempDir(t)
 	if err := outsideWorktree(ok); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestOutsideWorktreeSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	real := filepath.Join(dir, "real")
 	if err := os.Mkdir(real, 0o700); err != nil {
 		t.Fatal(err)
@@ -226,7 +239,7 @@ func TestOutsideWorktreeSymlink(t *testing.T) {
 
 func fakeRepo(t *testing.T, kind string) string {
 	t.Helper()
-	root := t.TempDir()
+	root := tempDir(t)
 	git := filepath.Join(root, ".git")
 	var err error
 	if kind == "dir" {
@@ -241,7 +254,7 @@ func fakeRepo(t *testing.T, kind string) string {
 }
 
 func TestKeygenUsage(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	ks := filepath.Join(dir, "new.p12")
 	cases := map[string][]string{
 		"no args":        {},

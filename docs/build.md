@@ -55,4 +55,25 @@ Signing keys and APK outputs must be outside every repository. Two private combi
 
 ## Python
 
-Never install packages into global Python. Standard-library scripts need no installation. If dependencies become necessary, create `python -m venv .venv` and use `.venv\Scripts\python.exe -m pip`; `.venv/` is ignored. Use the installed interpreter rather than the Windows Store shim.
+Never use global host Python for this project. Create a repository-local `.venv` before running host Python, including standard-library scripts; `.venv/` is ignored. Invoke `.venv/bin/python` on macOS or `.venv\Scripts\python.exe` on Windows. Ask before installing Python packages or other tools. IDAPython runs inside IDA.
+
+## macOS host checks
+
+User-approved Go 1.27.4 (darwin/arm64) is installed at the standard **`/usr/local/go`** location, owned by root/wheel and available through `~/.zshrc`'s `/usr/local/go/bin` PATH entry. It was initially installed in a Raspberry-named user tools directory, then moved with the user's administrator approval; the old Go directory is gone. A new interactive zsh reports Go 1.27.4 and `GOROOT=/usr/local/go`. The [official archive](https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz), 68,231,011 bytes, matched upstream SHA-256 `91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4` before extraction. The host gate sets `GOTOOLCHAIN=local` to prevent automatic toolchain downloads. No unrelated shell configuration was changed.
+
+Run `bash scripts/gate.sh` with Go, `gofmt`, Git and a C compiler on the process PATH (`CC` may select the compiler). This is the Bash counterpart to the Windows host gate, not an Android/iOS SDK build or device-acceptance test. It runs formatting, vet, Go tests, native host tests and repository-hygiene checks. Native executables and synthetic index fixtures are created in private temporary directories, not in the repository.
+
+The index-only hygiene check and its synthetic regressions can run independently:
+
+```sh
+bash scripts/check-repo_test.sh
+bash scripts/check-repo.sh
+```
+
+Existing Xcode 27.2 provides an iPhoneOS 27.2 SDK and Apple clang/signing tools on the November 17 macOS host; no additional iOS SDK installation is currently needed. Avoid `simctl` for this vphone workflow: an inventory call unexpectedly triggered a CoreSimulator service replacement on first use. This did not establish that an iOS simulator runtime was installed. Use `vphone-launchpad-cli` for the existing virtual iPhone; see [ios.md](ios.md) for the runtime-evidence limits.
+
+### Experimental iOS loader probe
+
+`bash scripts/build-ios-loader.sh` builds only Raspberry's logging-only arm64 dylib under ignored `build/ios/`. It uses the installed iPhoneOS SDK, minimum iOS 15.0 and dylib current/compatibility versions 1.0.0. It does not download tools, package an IPA or invoke a provisioning/signing workflow; the Apple linker may add its own ad-hoc Mach-O signature.
+
+`internal/ipa.AddLoader` is a hash-locked, in-memory preparation primitive, not a public IPA-patching command. Its output requires re-signing. Private developer packages were installed only through vphoned, which bypasses installd/provisioning. See [patches.md](patches.md) and [ios.md](ios.md); this probe implements neither endpoint routing nor Discord sign-in.

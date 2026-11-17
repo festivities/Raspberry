@@ -69,7 +69,13 @@ func walkNoSymlink(path string) error {
 		return fmt.Errorf("%w: path is a volume root", ErrRelative)
 	}
 	cur := vol
-	if vol != "" && !strings.HasPrefix(vol, `\\`) {
+	switch {
+	case vol == "":
+		// Unix absolute paths have no volume. Starting at "" would make every
+		// Lstat below resolve against the process working directory, so a real
+		// symlink ancestor in the absolute path would be missed. Start at root.
+		cur = string(filepath.Separator)
+	case !strings.HasPrefix(vol, `\\`):
 		cur = vol + string(filepath.Separator)
 	}
 	for _, part := range strings.Split(rest, string(filepath.Separator)) {

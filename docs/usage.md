@@ -53,6 +53,16 @@ After the native tables are applied, patch runs dexpatch `patch` and then dexpat
 
 `version` prints `raspberry 0.0.0-r0`.
 
+## Read-only iOS inspection
+
+```text
+raspberry ipa inspect --ipa <decrypted.ipa>
+```
+
+This command accepts only the locked iOS 10.1.0 IPA documented in [ios.md](ios.md). It verifies size and SHA-256 before parsing a bounded in-memory snapshot, then prints JSON metadata for the main executable. It neither extracts nor changes files and does not patch, sign or install an IPA.
+
+Bundle identity is explicitly labeled as a locked-baseline constant, not a parsed provisioning claim. Mach-O minimum OS and package minimum OS are different fields: the inspected executable declares iOS 12.0 while this app's `Info.plist` requires iOS 15.0. A successful report does not establish a valid signature, installability or gameplay compatibility.
+
 ## Limits
 
 Combined signed reruns have been verified byte-identical, with exactly the [documented entry changes](patches.md). Full game/auth/web acceptance is still pending. Native game TLS verification stays disabled in the stock client; see [security.md](security.md). The patcher does not fix that. A successful local sign is not evidence of production transport security. The DEX verifier checks untouched methods and full expected edited bodies; the command refuses to sign when that check fails.

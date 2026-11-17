@@ -16,6 +16,19 @@ import (
 	"time"
 )
 
+// tempDir returns a symlink-free fixture directory. t.TempDir() inherits the
+// macOS /var -> /private/var alias, which the fail-closed path checks reject by
+// design. Tests canonicalize their own fixtures rather than teaching production
+// code to follow or whitelist symlinks.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonical temp dir: %v", err)
+	}
+	return dir
+}
+
 func TestParseICACLS(t *testing.T) {
 	out := "C:\\k\\f.txt TESTBOX\\operator:(F)\n\nSuccessfully processed 1 files; Failed processing 0 files\n"
 	aces, err := parseICACLS(out, `C:\k\f.txt`)
@@ -52,7 +65,7 @@ func TestLimitBufWriteContract(t *testing.T) {
 }
 
 func TestPasswordFileOneLine(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	for _, body := range []string{"s3cret-token", "s3cret-token\n", "s3cret-token\r\n"} {
 		path := filepath.Join(dir, "pw")
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -80,7 +93,7 @@ func TestPasswordFileOneLine(t *testing.T) {
 }
 
 func TestPublish(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
 	if err := os.WriteFile(src, []byte("apk"), 0o644); err != nil {
@@ -152,15 +165,15 @@ func TestRejectPaths(t *testing.T) {
 	if _, err := Keygen(ctx, KeygenRequest{Alias: "raspberry", Keystore: gitDir}); !errors.Is(err, ErrGitDir) {
 		t.Fatalf("gitdir: %v", err)
 	}
-	wt := t.TempDir()
+	wt := tempDir(t)
 	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /nowhere\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Keygen(ctx, KeygenRequest{Alias: "raspberry", Keystore: filepath.Join(wt, "ks.p12")}); !errors.Is(err, ErrRepo) {
 		t.Fatalf("worktree: %v", err)
 	}
-	target := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
+	target := tempDir(t)
+	link := filepath.Join(tempDir(t), "link")
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +186,48 @@ func TestRejectPaths(t *testing.T) {
 	}
 }
 
+func TestWalkNoSymlinkUnixAbsolute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix root initialization regression")
+	}
+	root := tempDir(t)
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	// Decoy: the absolute prefix recreated with real directories under another
+	// working directory. The old code stripped the leading slash and walked this
+	// relative copy, so it never saw the real symlink in the absolute path.
+	decoy := tempDir(t)
+	rel := strings.TrimPrefix(filepath.Dir(link), string(filepath.Separator))
+	if err := os.MkdirAll(filepath.Join(decoy, rel), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(decoy); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(old); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	}()
+
+	if err := walkNoSymlink(filepath.Join(link, "ks.p12")); !errors.Is(err, ErrSymlink) {
+		t.Fatalf("absolute symlink ancestor: %v", err)
+	}
+}
+
 func TestOwnerOnlyLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	path := filepath.Join(dir, "locked.bin")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -199,13 +252,13 @@ func TestOwnerOnlyLock(t *testing.T) {
 func TestKeygenAndSignFakes(t *testing.T) {
 	tools := buildTools(t)
 	pw := "s3cret-token"
-	pwPath := filepath.Join(t.TempDir(), "pw")
+	pwPath := filepath.Join(tempDir(t), "pw")
 	if err := os.WriteFile(pwPath, []byte(pw+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Keygen(context.Background(), KeygenRequest{
 		Tools:    Tools{Keytool: tools.keytool},
-		Keystore: filepath.Join(t.TempDir(), "missing-parent", "dev.p12"),
+		Keystore: filepath.Join(tempDir(t), "missing-parent", "dev.p12"),
 		Alias:    "raspberry",
 		Password: Secret{File: pwPath},
 	}); !errors.Is(err, ErrPerm) {
@@ -218,7 +271,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ksDir := filepath.Join(t.TempDir(), "keys")
+	ksDir := filepath.Join(tempDir(t), "keys")
 	ks := filepath.Join(ksDir, "dev.p12")
 	got, err := Keygen(context.Background(), KeygenRequest{
 		Tools:    Tools{Keytool: tools.keytool},
@@ -255,7 +308,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	}
 
 	os.WriteFile(filepath.Join(tools.dir, "fail-keytool"), []byte("1"), 0o644)
-	failDir := filepath.Join(t.TempDir(), "failkeys")
+	failDir := filepath.Join(tempDir(t), "failkeys")
 	if _, err := Keygen(context.Background(), KeygenRequest{
 		Tools:    Tools{Keytool: tools.keytool},
 		Keystore: filepath.Join(failDir, "dev.p12"),
@@ -272,7 +325,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	}
 	os.Remove(filepath.Join(tools.dir, "fail-keytool"))
 
-	loose := filepath.Join(t.TempDir(), "loose.p12")
+	loose := filepath.Join(tempDir(t), "loose.p12")
 	ksBytes, err := os.ReadFile(ks)
 	if err != nil {
 		t.Fatal(err)
@@ -284,14 +337,14 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	looseIn := filepath.Join(t.TempDir(), "loose-in.apk")
+	looseIn := filepath.Join(tempDir(t), "loose-in.apk")
 	if err := os.WriteFile(looseIn, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err = SignAndVerify(context.Background(), SignRequest{
 		Tools:    Tools{Keytool: tools.keytool, Java: tools.java, Zipalign: tools.zipalign, Apksigner: tools.jar},
 		Input:    looseIn,
-		Output:   filepath.Join(t.TempDir(), "loose-out.apk"),
+		Output:   filepath.Join(tempDir(t), "loose-out.apk"),
 		Keystore: loose, Alias: "raspberry", Password: Secret{File: pwPath},
 	})
 	if !errors.Is(err, ErrPerm) {
@@ -312,12 +365,12 @@ func TestKeygenAndSignFakes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	in := filepath.Join(t.TempDir(), "in.apk")
+	in := filepath.Join(tempDir(t), "in.apk")
 	inBytes := []byte("apk-bytes-not-a-real-apk")
 	if err := os.WriteFile(in, inBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(t.TempDir(), "out.apk")
+	out := filepath.Join(tempDir(t), "out.apk")
 	if _, err := os.Lstat(filepath.Join(repoRoot(t), "LICENSE")); err == nil {
 		lic := filepath.Join(repoRoot(t), "LICENSE")
 		if _, err := requireInput(lic); err != nil {
@@ -403,7 +456,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tools.dir, "export-ec"), []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ecOut := filepath.Join(t.TempDir(), "ec.apk")
+	ecOut := filepath.Join(tempDir(t), "ec.apk")
 	_, err = SignAndVerify(context.Background(), SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
 		Input: in, Output: ecOut, Keystore: ks, Alias: "raspberry", Password: Secret{File: pwPath},
@@ -419,7 +472,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tools.dir, "fail-verify"), []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	badOut := filepath.Join(t.TempDir(), "bad-verify.apk")
+	badOut := filepath.Join(tempDir(t), "bad-verify.apk")
 	_, err = SignAndVerify(context.Background(), SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
 		Input: in, Output: badOut, Keystore: ks, Alias: "raspberry",
@@ -434,7 +487,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	}
 
 	os.WriteFile(filepath.Join(tools.dir, "echo-secret"), []byte("1"), 0o644)
-	echoOut := filepath.Join(t.TempDir(), "echo.apk")
+	echoOut := filepath.Join(tempDir(t), "echo.apk")
 	_, err = SignAndVerify(context.Background(), SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
 		Input: in, Output: echoOut, Keystore: ks, Alias: "raspberry",
@@ -451,7 +504,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	}
 	os.Remove(filepath.Join(tools.dir, "echo-secret"))
 
-	pre := filepath.Join(t.TempDir(), "exists.apk")
+	pre := filepath.Join(tempDir(t), "exists.apk")
 	os.WriteFile(pre, []byte("keep"), 0o644)
 	_, err = SignAndVerify(context.Background(), SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
@@ -466,7 +519,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	}
 
 	os.WriteFile(filepath.Join(tools.dir, "make-idsig"), []byte("1"), 0o644)
-	idsigOut := filepath.Join(t.TempDir(), "idsig.apk")
+	idsigOut := filepath.Join(tempDir(t), "idsig.apk")
 	if _, err := SignAndVerify(context.Background(), SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
 		Input: in, Output: idsigOut, Keystore: ks, Alias: "raspberry",
@@ -485,7 +538,7 @@ func TestKeygenAndSignFakes(t *testing.T) {
 	defer cancel()
 	_, err = SignAndVerify(ctx, SignRequest{
 		Tools: Tools{Java: tools.java, Keytool: tools.keytool, Zipalign: tools.zipalign, Apksigner: tools.jar},
-		Input: in, Output: filepath.Join(t.TempDir(), "slow.apk"), Keystore: ks, Alias: "raspberry",
+		Input: in, Output: filepath.Join(tempDir(t), "slow.apk"), Keystore: ks, Alias: "raspberry",
 		Password: Secret{File: pwPath},
 		Timeout:  200 * time.Millisecond,
 	})
@@ -502,7 +555,7 @@ func TestEnvPasswordNotOnArgv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tools.dir, "watch-env"), []byte("RASPBERRY_SIGN_PW"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ks := filepath.Join(t.TempDir(), "dev.p12")
+	ks := filepath.Join(tempDir(t), "dev.p12")
 	if _, err := Keygen(context.Background(), KeygenRequest{
 		Tools:    Tools{Keytool: tools.keytool},
 		Keystore: ks, Alias: "raspberry",
@@ -535,7 +588,7 @@ type rec struct {
 
 func buildTools(t *testing.T) toolSet {
 	t.Helper()
-	src := t.TempDir()
+	src := tempDir(t)
 	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module fake\n\ngo 1.22\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +607,7 @@ func buildTools(t *testing.T) toolSet {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("build fake: %v\n%s", err, buf.String())
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	ext := ""
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
