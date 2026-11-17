@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Host-only tests for the pure Foundation endpoint and auth cores.
-# Compiles endpoint.c as C, then links its object with Objective-C sources.
+# Host-only tests for the pure-C image selector and Foundation endpoint/auth cores.
+# Compiles pure C sources, then links the endpoint object with Objective-C sources.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || {
@@ -29,6 +29,13 @@ tmp_root=$(CDPATH= cd -- "$tmp_root" && pwd -P) || fail 'cannot canonicalize pri
 tmp=$(mktemp -d "$tmp_root/raspberry-ios-core.XXXXXX") || fail 'cannot create private test directory'
 chmod 700 "$tmp" || fail 'cannot secure private test directory'
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+clang -std=c11 -Wall -Wextra -Werror \
+    -I"$root/ios" \
+    "$root/ios/enqueue_probe_image_test.c" \
+    -o "$tmp/enqueue_probe_image_test" || fail 'compile enqueue image-selector tests'
+
+"$tmp/enqueue_probe_image_test" || fail 'enqueue image-selector tests failed'
 
 clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/native" \
