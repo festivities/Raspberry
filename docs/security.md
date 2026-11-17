@@ -6,6 +6,8 @@ The iOS 10.1.0 IPA is under active, separate assessment; the inspector and loggi
 
 For iOS, never replace the shared device UUID with a Discord credential: it also feeds telemetry and cookie/request state. A narrower guest-auth argument is under investigation. The stock URL callback logs complete URLs before forwarding to SDKs, so confidential auth callbacks must be intercepted before that path. No deployed iOS auth gate, credential storage policy or routing acceptance is established.
 
+The isolated iOS exchange client uses default platform TLS, rejects redirects and disables session cookie/credential storage and caching. Its bounded synthetic tests do not establish real-peer TLS or callback acceptance. A returned code is not authorization: its owner must still commit through the live attempt's lock-serialized writer, and cancel both the attempt and transport when abandoning sign-in. No native transport trust improvement follows from this component.
+
 ## Required checks
 
 - Redirect only the documented game-host allowlist. Unrelated traffic must remain unchanged even when it shares an IP address with the endpoint. Endpoint failures must not fall back to LINE's hosts.
