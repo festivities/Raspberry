@@ -38,6 +38,24 @@ clang -std=c11 -Wall -Wextra -Werror \
 "$tmp/enqueue_probe_image_test" || fail 'enqueue image-selector tests failed'
 
 clang -std=c11 -Wall -Wextra -Werror \
+    -I"$root/ios" \
+    "$root/ios/RBCurlProbe.c" "$root/ios/curl_probe_test.c" \
+    -o "$tmp/curl_probe_test" || fail 'compile cURL-probe host-fake tests'
+
+"$tmp/curl_probe_test" || fail 'cURL-probe host-fake tests failed'
+
+if command -v xcrun >/dev/null 2>&1; then
+    if sdk=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null) &&
+        [ -d "$sdk" ]; then
+        xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
+            -isysroot "$sdk" -std=c11 -Wall -Wextra -Werror \
+            -I"$root/ios" -c "$root/ios/RBCurlProbe.c" \
+            -o "$tmp/RBCurlProbe-ios15.o" ||
+            fail 'cross-compile cURL-probe core for iOS 15'
+    fi
+fi
+
+clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/native" \
     -c "$root/native/endpoint.c" \
     -o "$tmp/endpoint.o" || fail 'compile endpoint.c'
