@@ -240,3 +240,7 @@ Implementation is in progress across `cmd/raspberry`, `internal/{apk,baseline,de
 **Fresh curl diagnostic:** API mapping is complete; game linkage and lifecycle synchronization remain unverified. A small host-only runner with injected fake curl functions is in implementation. It must not bind to the game, perform real network requests or be deployed in this slice.
 
 **Fresh curl runner host validation:** fake function tests and full host gate pass. There is no real adapter or resolver; loopback mapping and stock curl lifecycle evidence are the next prerequisites to a synthetic guest run. No network, app, server, or device change.
+
+**Loopback preparation:** the static report supports `CURLOPT_RESOLVE` and CAINFO fixture-only verification. Fake-only local-address setup tests and private offline cert generation are active. No system trust change, listener, deployed adapter, or verified in-process curl lifecycle.
+
+**Loopback mapping and certificate checks passed:** the runner requires the fixed synthetic mapping and CA path under host fakes. The private certificate matrix is generated and host-verified; a bounded synthetic loopback listener is in implementation. Nothing deployed or changed on `myphone` or Cherry.

@@ -4,11 +4,15 @@
 
 /* Both authorities are reserved synthetic names and are never caller-supplied. */
 static char rb_test_url_expected[] =
-    "https://rb-curl-probe-expected.invalid/";
+    "https://rb-curl-probe-expected.invalid:18443/";
 static char rb_test_url_wrong_name[] =
-    "https://rb-curl-probe-wrong-name.invalid/";
+    "https://rb-curl-probe-wrong-name.invalid:18443/";
 static char rb_test_host_header[] =
     "Host: rb-curl-probe-http-host.invalid";
+static char rb_test_resolve_expected[] =
+    "rb-curl-probe-expected.invalid:18443:127.0.0.1";
+static char rb_test_resolve_wrong_name[] =
+    "rb-curl-probe-wrong-name.invalid:18443:127.0.0.1";
 static char rb_empty_proxy[] = "";
 static char rb_no_proxy[] = "*";
 
@@ -98,10 +102,16 @@ static rb_curl_code set_header_list(const struct rb_curl_probe_api *api,
 	return api->easy_setopt(easy, RB_CURL_PROBE_OPT_HTTPHEADER, headers);
 }
 
+static rb_curl_code set_resolve_list(const struct rb_curl_probe_api *api,
+    rb_curl_easy *easy, rb_curl_slist *resolves) {
+	return api->easy_setopt(easy, RB_CURL_PROBE_OPT_RESOLVE, resolves);
+}
+
 static void cleanup(const struct rb_curl_probe_api *api, rb_curl_easy *easy,
-    rb_curl_slist *headers) {
+    rb_curl_slist *headers, rb_curl_slist *resolves) {
 	api->easy_cleanup(easy);
 	api->slist_free_all(headers);
+	api->slist_free_all(resolves);
 }
 
 struct rb_curl_probe_result rb_curl_probe_run(
@@ -116,21 +126,26 @@ struct rb_curl_probe_result rb_curl_probe_run(
 	struct rb_curl_probe_sink sink = { 0, 0 };
 	rb_curl_easy *easy;
 	rb_curl_slist *headers = NULL;
+	rb_curl_slist *resolves = NULL;
 	char *url;
+	char *resolve_entry;
 	rb_curl_code code;
 	long status = 0;
 
 	if (!valid_api(api) || config == NULL ||
 	    (config->test_case != RB_CURL_PROBE_TEST_EXPECTED_NAME &&
 	     config->test_case != RB_CURL_PROBE_TEST_WRONG_NAME) ||
-	    (config->ca_info_path != NULL &&
-	     !has_required_length(config->ca_info_path,
-	         RB_CURL_PROBE_CAINFO_PATH_MAX))) {
+	    !has_required_length(config->ca_info_path,
+	        RB_CURL_PROBE_CAINFO_PATH_MAX)) {
 		return result;
 	}
-	url = config->test_case == RB_CURL_PROBE_TEST_EXPECTED_NAME
-	    ? rb_test_url_expected
-	    : rb_test_url_wrong_name;
+	if (config->test_case == RB_CURL_PROBE_TEST_EXPECTED_NAME) {
+		url = rb_test_url_expected;
+		resolve_entry = rb_test_resolve_expected;
+	} else {
+		url = rb_test_url_wrong_name;
+		resolve_entry = rb_test_resolve_wrong_name;
+	}
 
 	easy = api->easy_init();
 	if (easy == NULL) {
@@ -146,6 +161,15 @@ struct rb_curl_probe_result rb_curl_probe_run(
 			goto done;
 		}
 		headers = appended;
+	}
+	{
+		rb_curl_slist *appended =
+		    api->slist_append(resolves, resolve_entry);
+		if (appended == NULL) {
+			result.phase = RB_CURL_PROBE_PHASE_RESOLVE_LIST;
+			goto done;
+		}
+		resolves = appended;
 	}
 
 #define RB_SET_LONG(option_value, phase_value, long_value) do { \
@@ -209,15 +233,20 @@ struct rb_curl_probe_result rb_curl_probe_run(
 		result.curl_code = code;
 		goto done;
 	}
-	if (config->ca_info_path != NULL) {
-		/*
-		 * The reviewed target duplicates CAINFO. The caller's path remains
-		 * live for this entire call, and this code performs no file access.
-		 */
-		RB_SET_STRING(RB_CURL_PROBE_OPT_CAINFO,
-		    RB_CURL_PROBE_PHASE_SETOPT_CAINFO,
-		    (char *)config->ca_info_path);
+	code = set_resolve_list(api, easy, resolves);
+	if (code != RB_CURL_PROBE_CURLE_OK) {
+		result.phase = RB_CURL_PROBE_PHASE_SETOPT_RESOLVE;
+		result.curl_code = code;
+		goto done;
 	}
+
+	/*
+	 * The reviewed target duplicates CAINFO. The required caller-owned path
+	 * remains live through this call; this code performs no file access.
+	 */
+	RB_SET_STRING(RB_CURL_PROBE_OPT_CAINFO,
+	    RB_CURL_PROBE_PHASE_SETOPT_CAINFO,
+	    (char *)config->ca_info_path);
 
 #undef RB_SET_LONG
 #undef RB_SET_STRING
@@ -236,6 +265,6 @@ struct rb_curl_probe_result rb_curl_probe_run(
 	}
 
 done:
-	cleanup(api, easy, headers);
+	cleanup(api, easy, headers, resolves);
 	return result;
 }

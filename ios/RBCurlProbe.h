@@ -34,6 +34,7 @@ struct rb_curl_probe_api {
 	rb_curl_code (*easy_perform)(rb_curl_easy *easy);
 	rb_curl_easy_getinfo_fn easy_getinfo;
 	void (*easy_cleanup)(rb_curl_easy *easy);
+	/* Each slist is independently owned and must remain borrowed through cleanup. */
 	rb_curl_slist *(*slist_append)(rb_curl_slist *list, const char *line);
 	void (*slist_free_all)(rb_curl_slist *list);
 };
@@ -46,7 +47,7 @@ enum rb_curl_probe_test_case {
 
 struct rb_curl_probe_config {
 	enum rb_curl_probe_test_case test_case;
-	/* Optional caller-owned PEM path; no file access is performed here. */
+	/* Required bounded caller-owned fixture PEM path; no file access occurs. */
 	const char *ca_info_path;
 };
 
@@ -65,6 +66,7 @@ enum rb_curl_probe_option {
 	RB_CURL_PROBE_OPT_HTTPHEADER = 10023,
 	RB_CURL_PROBE_OPT_CAINFO = 10065,
 	RB_CURL_PROBE_OPT_NOPROXY = 10177,
+	RB_CURL_PROBE_OPT_RESOLVE = 10203,
 	RB_CURL_PROBE_OPT_WRITEFUNCTION = 20011,
 	RB_CURL_PROBE_INFO_RESPONSE_CODE = 0x200002,
 };
@@ -83,6 +85,7 @@ enum rb_curl_probe_phase {
 	RB_CURL_PROBE_PHASE_PREFLIGHT = 0,
 	RB_CURL_PROBE_PHASE_EASY_INIT,
 	RB_CURL_PROBE_PHASE_HEADER_LIST,
+	RB_CURL_PROBE_PHASE_RESOLVE_LIST,
 	RB_CURL_PROBE_PHASE_SETOPT_URL,
 	RB_CURL_PROBE_PHASE_SETOPT_SSL_VERIFYPEER,
 	RB_CURL_PROBE_PHASE_SETOPT_SSL_VERIFYHOST,
@@ -97,6 +100,7 @@ enum rb_curl_probe_phase {
 	RB_CURL_PROBE_PHASE_SETOPT_WRITEFUNCTION,
 	RB_CURL_PROBE_PHASE_SETOPT_WRITEDATA,
 	RB_CURL_PROBE_PHASE_SETOPT_HTTPHEADER,
+	RB_CURL_PROBE_PHASE_SETOPT_RESOLVE,
 	RB_CURL_PROBE_PHASE_SETOPT_CAINFO,
 	RB_CURL_PROBE_PHASE_PERFORM,
 	RB_CURL_PROBE_PHASE_GETINFO,
@@ -115,6 +119,9 @@ struct rb_curl_probe_result {
  * Runs at most one perform using only injected callbacks. Inputs are never
  * logged. This is not a network-safety boundary: current use is limited to
  * host fakes until binding and loopback mapping are independently reviewed.
+ * Fake tests prove only which values this runner passes. They do not establish
+ * CURLOPT_RESOLVE behavior, loopback-only routing, resolver fallback behavior,
+ * CA-file availability/trust, or network isolation.
  */
 struct rb_curl_probe_result rb_curl_probe_run(
     const struct rb_curl_probe_api *api,
