@@ -29,6 +29,23 @@
                                               (id<RBAuthFlowScheduler>)scheduler
                                        attemptClock:
                                            (id<RBAuthAttemptClock>)attemptClock {
+    return [self initWithBrowserDriver:browserDriver
+                       exchangeFactory:exchangeFactory
+                             scheduler:scheduler
+                          attemptClock:attemptClock
+                             committer:nil];
+}
+
+- (nullable instancetype)initWithBrowserDriver:
+                            (id<RBAuthBrowserSessionDriver>)browserDriver
+                                 exchangeFactory:
+                                     (RBAuthFlowExchangeFactory)exchangeFactory
+                                          scheduler:
+                                              (id<RBAuthFlowScheduler>)scheduler
+                                       attemptClock:
+                                           (id<RBAuthAttemptClock>)attemptClock
+                                          committer:
+                                              (id<RBAuthFlowCommitter>)committer {
     if (![NSThread isMainThread] || browserDriver == nil ||
         exchangeFactory == nil) {
         return nil;
@@ -57,7 +74,8 @@
                                               ownerLiveness:ownerLiveness
                                              exchangeFactory:exchangeFactory
                                                     scheduler:scheduler
-                                                 attemptClock:attemptClock];
+                                                 attemptClock:attemptClock
+                                                    committer:committer];
     if (_coordinator == nil) {
         return nil;
     }
@@ -69,7 +87,7 @@
 }
 
 - (RBAuthFlowStatus)startWithEndpoint:(RBEndpoint *)endpoint
-                      foregroundOwner:(UIViewController *)foregroundOwner
+                      foregroundOwner:(id)foregroundOwner
                          statusHandler:(RBAuthFlowStatusHandler)statusHandler {
     if (![NSThread isMainThread]) {
         return RBAuthFlowStatusMainThreadRequired;

@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 
 #import "RBAuthFlowCoordinator.h"
+#import "RBAuthSignInSessionController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -18,7 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// as cancellation. The main-thread owner must retain this binding and call
 /// stop before releasing it or its presentation owner. Deallocation is only a
 /// nonblocking fallback, not the normal teardown path.
-@interface RBAuthUIKitLifecycleBinding : NSObject
+@interface RBAuthUIKitLifecycleBinding : NSObject <RBAuthSignInAttemptBinding>
 
 @property(nonatomic, readonly) RBAuthFlowStatus status;
 
@@ -34,11 +35,23 @@ NS_ASSUME_NONNULL_BEGIN
                                        attemptClock:
                                            (nullable id<RBAuthAttemptClock>)attemptClock;
 
+- (nullable instancetype)initWithBrowserDriver:
+                            (id<RBAuthBrowserSessionDriver>)browserDriver
+                                 exchangeFactory:
+                                     (RBAuthFlowExchangeFactory)exchangeFactory
+                                          scheduler:
+                                              (nullable id<RBAuthFlowScheduler>)scheduler
+                                       attemptClock:
+                                           (nullable id<RBAuthAttemptClock>)attemptClock
+                                          committer:
+                                              (nullable id<RBAuthFlowCommitter>)committer
+    NS_DESIGNATED_INITIALIZER;
+
 /// Main-thread-only. The owner is checked without forcing view loading. An
 /// observer for the exact shared application is installed before forwarding
 /// the explicit start to RBAuthFlowCoordinator.
 - (RBAuthFlowStatus)startWithEndpoint:(nullable RBEndpoint *)endpoint
-                      foregroundOwner:(nullable UIViewController *)foregroundOwner
+                      foregroundOwner:(nullable id)foregroundOwner
                          statusHandler:(nullable RBAuthFlowStatusHandler)statusHandler;
 
 /// Main-thread-only, idempotent teardown: unregisters the exact app observer

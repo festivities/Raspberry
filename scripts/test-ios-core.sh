@@ -176,6 +176,19 @@ clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
 "$tmp/auth_guest_credential_gate_test" ||
     fail 'auth-guest-credential-gate tests failed'
 
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthStore.m" \
+    "$root/ios/RBAuthGuestCredentialGate.m" \
+    "$root/ios/RBAuthSignInSessionController.m" \
+    "$root/ios/auth_signin_session_controller_test.m" "$tmp/endpoint.o" \
+    -framework Foundation -framework CoreFoundation \
+    -o "$tmp/auth_signin_session_controller_test" ||
+    fail 'compile Foundation auth-signin-session-controller tests'
+
+"$tmp/auth_signin_session_controller_test" ||
+    fail 'auth-signin-session-controller tests failed'
+
 clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \
     "$root/ios/RBSocketRouter.c" "$root/ios/socket_router_test.c" "$tmp/endpoint.o" \
@@ -203,11 +216,11 @@ if command -v xcrun >/dev/null 2>&1; then
 
         for source in RBEndpoint RBURLRewrite RBAuthAttempt RBAuthBrowserSession \
             RBAuthExchangeClient RBAuthFlowCoordinator RBAuthStore \
-            RBAuthGuestCredentialGate \
+            RBAuthGuestCredentialGate RBAuthSignInSessionController \
             RBNoticeRouteClient RBNoticeRouteErrorAdapter \
             RBAuthUIKitOwnerConditions RBASWebAuthenticationSessionDriver \
             RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding \
-            RBAuthCallbackSanitizer; do
+            RBAuthUIKitSignInOverlay RBAuthCallbackSanitizer; do
             xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
                 -isysroot "$sdk" -fblocks -fobjc-arc \
                 -Wall -Wextra -Werror \
