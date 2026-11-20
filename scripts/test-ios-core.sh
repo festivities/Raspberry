@@ -140,6 +140,27 @@ clang -DRB_NOTICE_ROUTE_TESTING=1 -fblocks -fobjc-arc -Wall -Wextra -Werror \
 "$tmp/notice_route_client_test" ||
     fail 'notice-route client tests failed'
 
+clang -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthStore.m" \
+    "$root/ios/auth_store_test.m" "$tmp/endpoint.o" \
+    -framework Foundation -framework CoreFoundation \
+    -o "$tmp/auth_store_test" ||
+    fail 'compile Foundation auth-store tests'
+
+"$tmp/auth_store_test" ||
+    fail 'auth-store tests failed'
+
+clang -std=c11 -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBSocketRouter.c" "$root/ios/socket_router_test.c" "$tmp/endpoint.o" \
+    -lpthread \
+    -o "$tmp/socket_router_test" ||
+    fail 'compile iOS socket-router tests'
+
+"$tmp/socket_router_test" ||
+    fail 'iOS socket-router tests failed'
+
 if command -v xcrun >/dev/null 2>&1; then
     if sdk=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null) &&
         [ -d "$sdk" ]; then
@@ -149,8 +170,14 @@ if command -v xcrun >/dev/null 2>&1; then
             -o "$tmp/endpoint-ios15.o" ||
             fail 'cross-compile endpoint C core for iOS 15'
 
+        xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
+            -isysroot "$sdk" -std=c11 -Wall -Wextra -Werror \
+            -I"$root/ios" -I"$root/native" -c "$root/ios/RBSocketRouter.c" \
+            -o "$tmp/RBSocketRouter-ios15.o" ||
+            fail 'cross-compile RBSocketRouter for arm64 iOS 15'
+
         for source in RBEndpoint RBURLRewrite RBAuthAttempt RBAuthBrowserSession \
-            RBAuthExchangeClient RBAuthFlowCoordinator \
+            RBAuthExchangeClient RBAuthFlowCoordinator RBAuthStore \
             RBNoticeRouteClient RBNoticeRouteErrorAdapter \
             RBAuthUIKitOwnerConditions RBASWebAuthenticationSessionDriver \
             RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding; do
