@@ -53,15 +53,28 @@ After the native tables are applied, patch runs dexpatch `patch` and then dexpat
 
 `version` prints `raspberry 0.0.0-r0`.
 
-## Read-only iOS inspection
+## iOS inspection and patching
 
 ```text
 raspberry ipa inspect --ipa <decrypted.ipa>
 ```
 
-This command accepts only the locked iOS 10.1.0 IPA documented in [ios.md](ios.md). It verifies size and SHA-256 before parsing a bounded in-memory snapshot, then prints JSON metadata for the main executable. It neither extracts nor changes files and does not patch, sign or install an IPA.
+`ipa inspect` accepts only the locked iOS 10.1.0 IPA documented in [ios.md](ios.md). It verifies size and SHA-256 before parsing a bounded in-memory snapshot, then prints JSON metadata for the main executable. It neither extracts nor changes files and does not patch, sign or install an IPA.
 
 Bundle identity is explicitly labeled as a locked-baseline constant, not a parsed provisioning claim. Mach-O minimum OS and package minimum OS are different fields: the inspected executable declares iOS 12.0 while this app's `Info.plist` requires iOS 15.0. A successful report does not establish a valid signature, installability or gameplay compatibility.
+
+To build the iOS runtime library and patch the locked iOS 10.1.0 IPA on macOS (with Xcode's `iPhoneOS` SDK installed):
+
+```text
+./scripts/build-ios-runtime.sh
+go run ./cmd/raspberry ipa patch \
+  --ipa <decrypted.ipa> \
+  --endpoint cherry.example.org \
+  --port 443=<https-port> \
+  --out <absolute-dir-outside-any-repo>
+```
+
+`scripts/build-ios-runtime.sh` writes `build/ios/libraspberry.dylib` (`arm64-apple-ios15.0`, `@rpath/libraspberry.dylib`, version `1.0.0`) under the gitignored `build/` tree. `ipa patch` accepts repeatable `--port <client>=<endpoint>` mappings (ports `80`, `443`, `10000`, `10123`) and an optional `--dylib <file>` (default `build/ios/libraspberry.dylib`), verifies all Mach-O write/guard windows and deterministic ZIP assembly in memory, and writes `raspberry-lineplay-10.1.0-unsigned.ipa` atomically without overwriting an existing file. The output IPA is unsigned; sign and install it with your signing tool or vphone.
 
 ## Limits
 

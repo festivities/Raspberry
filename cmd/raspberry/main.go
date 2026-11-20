@@ -70,6 +70,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "                       [--dev-pin-sha256 <64 hex>]")
 	fmt.Fprintln(w, "       raspberry keygen --keystore <file> (--password-file <file> | --password-env <name>)")
 	fmt.Fprintln(w, "       raspberry ipa inspect --ipa <file>")
+	fmt.Fprintln(w, "       raspberry ipa patch --ipa <file> --endpoint <host> --out <dir>")
+	fmt.Fprintln(w, "                           [--port 443=8443]... [--dylib <file>]")
 	fmt.Fprintln(w, "       raspberry version")
 	fmt.Fprintln(w, "patch is not a standalone builder: it needs scripts/build-native, build-dex, build-dexpatch, and the pinned JDK/SDK/smali tools. See docs/usage.md.")
 	fmt.Fprintln(w, "--dev-pin-sha256 is an extra check after platform TLS. It does not trust a self-signed certificate and is omitted unless set.")

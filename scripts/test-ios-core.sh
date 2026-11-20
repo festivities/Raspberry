@@ -77,6 +77,16 @@ clang -fobjc-arc -Wall -Wextra -Werror \
 
 "$tmp/url_rewrite_test" || fail 'URL-rewrite tests failed'
 
+clang -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBURLRewrite.m" \
+    "$root/ios/RBWebURLRouter.m" "$root/ios/web_url_router_test.m" \
+    "$tmp/endpoint.o" \
+    -framework Foundation \
+    -o "$tmp/web_url_router_test" || fail 'compile Foundation Web URL-router tests'
+
+"$tmp/web_url_router_test" || fail 'Web URL-router tests failed'
+
 clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \
     "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" "$root/ios/auth_attempt_test.m" "$tmp/endpoint.o" \
@@ -214,13 +224,13 @@ if command -v xcrun >/dev/null 2>&1; then
             -o "$tmp/RBSocketRouter-ios15.o" ||
             fail 'cross-compile RBSocketRouter for arm64 iOS 15'
 
-        for source in RBEndpoint RBURLRewrite RBAuthAttempt RBAuthBrowserSession \
+        for source in RBEndpoint RBURLRewrite RBWebURLRouter RBAuthAttempt RBAuthBrowserSession \
             RBAuthExchangeClient RBAuthFlowCoordinator RBAuthStore \
             RBAuthGuestCredentialGate RBAuthSignInSessionController \
             RBNoticeRouteClient RBNoticeRouteErrorAdapter \
             RBAuthUIKitOwnerConditions RBASWebAuthenticationSessionDriver \
             RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding \
-            RBAuthUIKitSignInOverlay RBAuthCallbackSanitizer; do
+            RBAuthUIKitSignInOverlay RBAuthCallbackSanitizer RBRaspberryRuntime; do
             xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
                 -isysroot "$sdk" -fblocks -fobjc-arc \
                 -Wall -Wextra -Werror \
