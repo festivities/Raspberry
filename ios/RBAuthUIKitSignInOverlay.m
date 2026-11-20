@@ -236,15 +236,44 @@ NSString *const RBAuthSignInButtonAccessibilityIdentifier =
             @"Sign in with Discord to connect to this server.";
         break;
     case RBAuthSignInGateStateAttemptInProgress:
-        _statusLabel.text = @"Completing Discord sign-in...";
+        switch (_sessionController.lastFlowStatus) {
+        case RBAuthFlowStatusWaitingForOwningApplicationForeground:
+            _statusLabel.text = @"Finishing browser handoff...";
+            break;
+        case RBAuthFlowStatusExchangeInProgress:
+            _statusLabel.text = @"Exchanging sign-in ticket...";
+            break;
+        default:
+            _statusLabel.text = @"Completing Discord sign-in...";
+            break;
+        }
         break;
     case RBAuthSignInGateStateRetryRequired:
-        if (_sessionController.lastFlowStatus == RBAuthFlowStatusCancelled) {
+        switch (_sessionController.lastFlowStatus) {
+        case RBAuthFlowStatusCancelled:
             _statusLabel.text =
                 @"Sign-in was cancelled. Tap below to try again.";
-        } else {
+            break;
+        case RBAuthFlowStatusExpired:
+            _statusLabel.text =
+                @"Sign-in ticket expired before exchange. Tap below to try again.";
+            break;
+        case RBAuthFlowStatusForegroundLost:
+            _statusLabel.text =
+                @"Sign-in paused because window lost foreground. Tap below to try again.";
+            break;
+        case RBAuthFlowStatusExchangeTimedOut:
+            _statusLabel.text =
+                @"Sign-in exchange timed out. Tap below to try again.";
+            break;
+        case RBAuthFlowStatusCommitFailed:
+            _statusLabel.text =
+                @"Sign-in credential save failed. Tap below to try again.";
+            break;
+        default:
             _statusLabel.text =
                 @"Sign-in could not be completed. Tap below to try again.";
+            break;
         }
         break;
     case RBAuthSignInGateStateAuthorized:
