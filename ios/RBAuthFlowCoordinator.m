@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 
 @interface RBAuthFlowRound : NSObject
 @property(nonatomic, strong) RBAuthAttempt *attempt;
+@property(nonatomic, strong, nullable) RBEndpoint *endpoint;
 @property(nonatomic, strong) id foregroundOwner;
 @property(nonatomic, strong) id<RBAuthFlowExchangeClient> exchangeClient;
 @property(nonatomic, strong) id<RBAuthFlowScheduledTask> attemptTimer;
@@ -46,6 +47,9 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 @implementation RBAuthFlowRound
 @end
 
+@implementation RBAuthStore (RBAuthFlowCommitter)
+@end
+
 @interface RBAuthFlowCoordinator () {
     RBAuthBrowserSession *_browserSession;
     id _owningApplication;
@@ -54,6 +58,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
     RBAuthFlowExchangeFactory _exchangeFactory;
     id<RBAuthFlowScheduler> _scheduler;
     id<RBAuthAttemptClock> _attemptClock;
+    id<RBAuthFlowCommitter> _committer;
     RBAuthFlowRound *_currentRound;
     RBAuthFlowStatus _status;
 }
@@ -61,6 +66,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 - (void)handleBrowserOutcome:(RBAuthBrowserOutcome)outcome
                        round:(RBAuthFlowRound *)round;
 - (void)handleExchangeResult:(BOOL)hasValidatedCode
+                  uniqueCode:(nullable NSString *)uniqueCode
                        error:(RBAuthExchangeClientError)error
                        round:(RBAuthFlowRound *)round;
 - (void)claimExchangeForRound:(RBAuthFlowRound *)round;
@@ -164,6 +170,24 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
                                      exchangeFactory:(RBAuthFlowExchangeFactory)exchangeFactory
                                           scheduler:(id<RBAuthFlowScheduler>)scheduler
                                        attemptClock:(id<RBAuthAttemptClock>)attemptClock {
+    return [self initWithBrowserDriver:browserDriver
+                     owningApplication:owningApplication
+        applicationDidBecomeActiveNotificationName:notificationName
+                         ownerLiveness:ownerLiveness
+                       exchangeFactory:exchangeFactory
+                             scheduler:scheduler
+                          attemptClock:attemptClock
+                             committer:nil];
+}
+
+- (nullable instancetype)initWithBrowserDriver:(id<RBAuthBrowserSessionDriver>)browserDriver
+                              owningApplication:(id)owningApplication
+            applicationDidBecomeActiveNotificationName:(NSString *)notificationName
+                                    ownerLiveness:(id<RBAuthFlowOwnerLiveness>)ownerLiveness
+                                     exchangeFactory:(RBAuthFlowExchangeFactory)exchangeFactory
+                                          scheduler:(id<RBAuthFlowScheduler>)scheduler
+                                       attemptClock:(id<RBAuthAttemptClock>)attemptClock
+                                          committer:(nullable id<RBAuthFlowCommitter>)committer {
     if (browserDriver == nil || owningApplication == nil ||
         notificationName.length == 0 || ownerLiveness == nil) {
         return nil;
@@ -189,6 +213,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
     }
     _scheduler = scheduler ?: [[RBAuthFlowDispatchScheduler alloc] init];
     _attemptClock = attemptClock;
+    _committer = committer;
     _status = RBAuthFlowStatusIdle;
     return self;
 }
@@ -227,6 +252,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 
     RBAuthFlowRound *round = [[RBAuthFlowRound alloc] init];
     round.attempt = attempt;
+    round.endpoint = endpoint;
     round.foregroundOwner = foregroundOwner;
     round.statusHandler = statusHandler;
     round.status = RBAuthFlowStatusBrowserStarting;
@@ -399,12 +425,15 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 
     __weak typeof(self) weakSelf = self;
     __weak RBAuthFlowRound *weakRound = round;
+    BOOL hasCommitter = _committer != nil;
     BOOL started = [client startWithCompletion:^(NSString *uniqueCode,
                                                   RBAuthExchangeClientError error) {
-        // The response value is deliberately reduced to a boolean in this
-        // stack frame; only the fixed result and error enum cross to main.
         BOOL hasValidatedCode = uniqueCode != nil &&
                                 error == RBAuthExchangeClientErrorNone;
+        // When diagnostic-only (_committer == nil), reduce the response value
+        // to a boolean in this stack frame; never cross uniqueCode to main.
+        NSString *validatedCode =
+            (hasCommitter && hasValidatedCode) ? [uniqueCode copy] : nil;
         RBAuthFlowCoordinator *strongSelf = weakSelf;
         RBAuthFlowRound *strongRound = weakRound;
         if (strongSelf == nil || strongRound == nil) {
@@ -415,6 +444,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
             RBAuthFlowRound *mainRound = weakRound;
             if (mainSelf != nil && mainRound != nil) {
                 [mainSelf handleExchangeResult:hasValidatedCode
+                                    uniqueCode:validatedCode
                                          error:error
                                          round:mainRound];
             }
@@ -529,6 +559,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
 }
 
 - (void)handleExchangeResult:(BOOL)hasValidatedCode
+                  uniqueCode:(nullable NSString *)uniqueCode
                        error:(RBAuthExchangeClientError)error
                        round:(RBAuthFlowRound *)round {
     if (![NSThread isMainThread]) {
@@ -539,8 +570,9 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
             RBAuthFlowRound *strongRound = weakRound;
             if (strongSelf != nil && strongRound != nil) {
                 [strongSelf handleExchangeResult:hasValidatedCode
-                                            error:error
-                                            round:strongRound];
+                                      uniqueCode:uniqueCode
+                                           error:error
+                                           round:strongRound];
             }
         });
         return;
@@ -553,7 +585,8 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
     round.exchangeTimer = nil;
     round.exchangeClient = nil;
 
-    if (round.attempt.stage == RBAuthAttemptStageExpired) {
+    RBAuthAttemptStage currentStage = round.attempt.stage;
+    if (currentStage == RBAuthAttemptStageExpired) {
         [self finishRound:round
                    status:RBAuthFlowStatusExpired
             cancelBrowser:NO
@@ -561,14 +594,26 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
         attemptTermination:RBAuthFlowAttemptTerminationNone];
         return;
     }
-    if (error == RBAuthExchangeClientErrorNone && hasValidatedCode) {
-        // This is a diagnostic boundary, not sign-in. Discard the validated
-        // code and clear the attempt; a real app-scoped continuation is absent.
+    if (currentStage == RBAuthAttemptStageCancelled) {
         [self finishRound:round
-                   status:RBAuthFlowStatusExchangeValidatedNotCommitted
+                   status:RBAuthFlowStatusCancelled
             cancelBrowser:NO
            cancelExchange:NO
-        attemptTermination:RBAuthFlowAttemptTerminationFailExchange];
+        attemptTermination:RBAuthFlowAttemptTerminationNone];
+        return;
+    }
+    if (error == RBAuthExchangeClientErrorNone && hasValidatedCode) {
+        if (_committer == nil) {
+            // Diagnostic boundary, not sign-in. Discard the validated code
+            // and clear the attempt.
+            [self finishRound:round
+                       status:RBAuthFlowStatusExchangeValidatedNotCommitted
+                cancelBrowser:NO
+               cancelExchange:NO
+            attemptTermination:RBAuthFlowAttemptTerminationFailExchange];
+            return;
+        }
+        [self commitValidatedCode:uniqueCode forRound:round];
         return;
     }
     [self finishRound:round
@@ -576,6 +621,91 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
         cancelBrowser:NO
        cancelExchange:NO
     attemptTermination:RBAuthFlowAttemptTerminationFailExchange];
+}
+
+- (void)commitValidatedCode:(nullable NSString *)uniqueCode
+                   forRound:(RBAuthFlowRound *)round {
+    if (round.attempt.stage != RBAuthAttemptStageExchangeClaimed ||
+        uniqueCode == nil || round.endpoint == nil) {
+        [self finishRound:round
+                   status:RBAuthFlowStatusCommitFailed
+            cancelBrowser:NO
+           cancelExchange:NO
+        attemptTermination:RBAuthFlowAttemptTerminationFailExchange];
+        return;
+    }
+
+    BOOL ownerStillForeground =
+        [_ownerLiveness isForegroundOwner:round.foregroundOwner
+                     inOwningApplication:_owningApplication];
+    if (![self isCurrentRound:round]) {
+        return;
+    }
+    if (!ownerStillForeground) {
+        [self finishRound:round
+                   status:RBAuthFlowStatusForegroundLost
+            cancelBrowser:NO
+           cancelExchange:NO
+        attemptTermination:RBAuthFlowAttemptTerminationCancel];
+        return;
+    }
+
+    RBAuthAttemptStage stageAfterLiveness = round.attempt.stage;
+    if (stageAfterLiveness == RBAuthAttemptStageExpired) {
+        [self finishRound:round
+                   status:RBAuthFlowStatusExpired
+            cancelBrowser:NO
+           cancelExchange:NO
+        attemptTermination:RBAuthFlowAttemptTerminationNone];
+        return;
+    }
+    if (stageAfterLiveness == RBAuthAttemptStageCancelled) {
+        [self finishRound:round
+                   status:RBAuthFlowStatusCancelled
+            cancelBrowser:NO
+           cancelExchange:NO
+        attemptTermination:RBAuthFlowAttemptTerminationNone];
+        return;
+    }
+
+    id<RBAuthFlowCommitter> committer = _committer;
+    RBEndpoint *endpoint = round.endpoint;
+    BOOL committed = [round.attempt commitWithWriter:^BOOL(RBAuthExchangeRequest *request) {
+        if (request == nil ||
+            ![request.httpsOrigin isEqualToString:endpoint.httpsOrigin]) {
+            return NO;
+        }
+        NSError *commitError = nil;
+        return [committer commitUniqueCode:uniqueCode
+                               forEndpoint:endpoint
+                                     error:&commitError];
+    }];
+    if (![self isCurrentRound:round]) {
+        return;
+    }
+    if (committed) {
+        [self finishRound:round
+                   status:RBAuthFlowStatusAuthorized
+            cancelBrowser:NO
+           cancelExchange:NO
+        attemptTermination:RBAuthFlowAttemptTerminationNone];
+        return;
+    }
+
+    RBAuthAttemptStage postCommitStage = round.attempt.stage;
+    RBAuthFlowStatus failureStatus = RBAuthFlowStatusCommitFailed;
+    if (postCommitStage == RBAuthAttemptStageExpired) {
+        failureStatus = RBAuthFlowStatusExpired;
+    } else if (postCommitStage == RBAuthAttemptStageCancelled) {
+        failureStatus = RBAuthFlowStatusCancelled;
+    }
+    [self finishRound:round
+               status:failureStatus
+        cancelBrowser:NO
+       cancelExchange:NO
+    attemptTermination:failureStatus == RBAuthFlowStatusCommitFailed
+                          ? RBAuthFlowAttemptTerminationFailExchange
+                          : RBAuthFlowAttemptTerminationNone];
 }
 
 - (void)timeoutRound:(RBAuthFlowRound *)round kind:(RBAuthFlowTimerKind)kind {
@@ -688,6 +818,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
     RBAuthFlowStatusHandler handler = round.statusHandler;
     round.statusHandler = nil;
     round.foregroundOwner = nil;
+    round.endpoint = nil;
     if (handler != nil) {
         handler(status);
     }
@@ -710,6 +841,7 @@ typedef NS_ENUM(NSInteger, RBAuthFlowAttemptTermination) {
     round.exchangeClient = nil;
     round.statusHandler = nil;
     round.foregroundOwner = nil;
+    round.endpoint = nil;
     (void)[_browserSession cancelCurrentSession];
 }
 

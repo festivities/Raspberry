@@ -108,7 +108,7 @@ clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \
     "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" \
     "$root/ios/RBAuthBrowserSession.m" "$root/ios/RBAuthExchangeClient.m" \
-    "$root/ios/RBAuthFlowCoordinator.m" \
+    "$root/ios/RBAuthStore.m" "$root/ios/RBAuthFlowCoordinator.m" \
     "$root/ios/auth_flow_coordinator_test.m" "$tmp/endpoint.o" \
     -framework Foundation -framework Security -framework CoreFoundation \
     -o "$tmp/auth_flow_coordinator_test" ||

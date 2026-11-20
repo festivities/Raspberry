@@ -7,6 +7,7 @@
 #import "RBAuthAttempt.h"
 #import "RBAuthBrowserSession.h"
 #import "RBAuthExchangeClient.h"
+#import "RBAuthStore.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -25,6 +26,8 @@ typedef NS_ENUM(NSInteger, RBAuthFlowStatus) {
     RBAuthFlowStatusFailed,
     RBAuthFlowStatusCancelled,
     RBAuthFlowStatusExpired,
+    RBAuthFlowStatusAuthorized,
+    RBAuthFlowStatusCommitFailed,
 };
 
 typedef void (^RBAuthFlowStatusHandler)(RBAuthFlowStatus status);
@@ -58,12 +61,24 @@ typedef id<RBAuthFlowExchangeClient> _Nullable (^RBAuthFlowExchangeFactory)(
        inOwningApplication:(id)owningApplication;
 @end
 
+/// Optional synchronous persistence seam invoked on the main thread under
+/// RBAuthAttempt's serialized commit lock after foreground/liveness rechecks.
+/// Implementations must not log or expose uniqueCode.
+@protocol RBAuthFlowCommitter <NSObject>
+- (BOOL)commitUniqueCode:(NSString *)uniqueCode
+             forEndpoint:(RBEndpoint *)endpoint
+                   error:(NSError * _Nullable * _Nullable)error;
+@end
+
+@interface RBAuthStore (RBAuthFlowCommitter) <RBAuthFlowCommitter>
+@end
+
 /// Main-thread-owned composition of one in-memory attempt, its browser callback
-/// owner, and a single foreground-claimed exchange. It never commits or exposes
-/// an exchange credential; callers receive only fixed status values. A
-/// successful exchange is diagnostic-only, not authorization: real app-scoped
-/// credential continuation is intentionally missing and must not be replaced
-/// with a fallback identity or account setting.
+/// owner, and a single foreground-claimed exchange. Callers receive only fixed
+/// status values and never receive uniqueCode. When committer is nil, a
+/// successful exchange stops at diagnostic RBAuthFlowStatusExchangeValidatedNotCommitted;
+/// when committer is non-nil, the validated credential is committed via
+/// RBAuthAttempt's serialized commit lock.
 @interface RBAuthFlowCoordinator : NSObject
 
 @property(nonatomic, readonly) RBAuthFlowStatus status;
@@ -78,6 +93,7 @@ typedef id<RBAuthFlowExchangeClient> _Nullable (^RBAuthFlowExchangeFactory)(
 /// ownerLiveness is mandatory; initialization fails if it is absent. Its
 /// synchronous answer must verify the current active app and exact foreground
 /// presentation owner, not merely remember an earlier notification.
+/// Passing committer:nil preserves diagnostic-only behavior.
 - (nullable instancetype)initWithBrowserDriver:(id<RBAuthBrowserSessionDriver>)browserDriver
                               owningApplication:(id)owningApplication
             applicationDidBecomeActiveNotificationName:(NSString *)notificationName
@@ -85,6 +101,16 @@ typedef id<RBAuthFlowExchangeClient> _Nullable (^RBAuthFlowExchangeFactory)(
                                    exchangeFactory:(nullable RBAuthFlowExchangeFactory)exchangeFactory
                                         scheduler:(nullable id<RBAuthFlowScheduler>)scheduler
                                      attemptClock:(nullable id<RBAuthAttemptClock>)attemptClock;
+
+- (nullable instancetype)initWithBrowserDriver:(id<RBAuthBrowserSessionDriver>)browserDriver
+                              owningApplication:(id)owningApplication
+            applicationDidBecomeActiveNotificationName:(NSString *)notificationName
+                                    ownerLiveness:(nullable id<RBAuthFlowOwnerLiveness>)ownerLiveness
+                                   exchangeFactory:(nullable RBAuthFlowExchangeFactory)exchangeFactory
+                                        scheduler:(nullable id<RBAuthFlowScheduler>)scheduler
+                                     attemptClock:(nullable id<RBAuthAttemptClock>)attemptClock
+                                        committer:(nullable id<RBAuthFlowCommitter>)committer
+    NS_DESIGNATED_INITIALIZER;
 
 /// Main-thread-only. Every call is an explicit new attempt and supersedes any
 /// earlier one before starting. foregroundOwner is the existing live

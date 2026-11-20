@@ -1,11 +1,17 @@
 #import "RBAuthFlowCoordinator.h"
 
+#import "RBAuthStore.h"
 #import "RBEndpoint.h"
 
 #import <CoreFoundation/CoreFoundation.h>
 #import <dispatch/dispatch.h>
 
+#include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static int failures = 0;
 
@@ -36,12 +42,16 @@ static void PumpMainQueue(NSUInteger iterations);
 @property(nonatomic, strong) id expectedOwner;
 @property(nonatomic) BOOL active;
 @property(nonatomic) NSUInteger checkCalls;
+@property(nonatomic, copy, nullable) dispatch_block_t checkHook;
 @end
 
 @implementation RBFakeOwnerLiveness
 - (BOOL)isForegroundOwner:(id)foregroundOwner
        inOwningApplication:(id)owningApplication {
     self.checkCalls++;
+    if (self.checkHook != nil) {
+        self.checkHook();
+    }
     return [NSThread isMainThread] && self.active &&
            foregroundOwner == self.expectedOwner &&
            owningApplication == self.expectedApplication;
@@ -278,6 +288,143 @@ static void PumpMainQueue(NSUInteger iterations);
 }
 @end
 
+@interface RBFakeAuthCommitter : NSObject <RBAuthFlowCommitter>
+@property(nonatomic, strong, nullable) id<RBAuthFlowCommitter> innerCommitter;
+@property(nonatomic) BOOL shouldSucceed;
+@property(nonatomic) NSUInteger commitCalls;
+@property(nonatomic) BOOL committedOnMainThread;
+@property(nonatomic, copy, nullable) NSString *lastUniqueCode;
+@property(nonatomic, strong, nullable) RBEndpoint *lastEndpoint;
+@property(nonatomic, copy, nullable) dispatch_block_t reentrancyHandler;
+@end
+
+@implementation RBFakeAuthCommitter
+- (instancetype)init {
+    self = [super init];
+    if (self != nil) {
+        _shouldSucceed = YES;
+        _committedOnMainThread = YES;
+    }
+    return self;
+}
+
+- (BOOL)commitUniqueCode:(NSString *)uniqueCode
+             forEndpoint:(RBEndpoint *)endpoint
+                   error:(NSError * _Nullable * _Nullable)error {
+    self.commitCalls++;
+    if (![NSThread isMainThread]) {
+        self.committedOnMainThread = NO;
+    }
+    self.lastUniqueCode = uniqueCode;
+    self.lastEndpoint = endpoint;
+    if (self.reentrancyHandler != nil) {
+        self.reentrancyHandler();
+    }
+    if (self.innerCommitter != nil) {
+        return [self.innerCommitter commitUniqueCode:uniqueCode
+                                         forEndpoint:endpoint
+                                               error:error];
+    }
+    if (!self.shouldSucceed) {
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:@"org.raspberry.test"
+                                         code:1
+                                     userInfo:@{NSLocalizedDescriptionKey : @"synthetic commit failure"}];
+        }
+        return NO;
+    }
+    return YES;
+}
+@end
+
+@interface RBTestAuthStoreFixture : NSObject
+@property(nonatomic, copy) NSString *rootPath;
+@property(nonatomic, copy) NSString *basePath;
+@property(nonatomic, copy) NSString *cachesPath;
+@property(nonatomic, copy) NSString *cookiePath;
+@property(nonatomic, copy) NSString *authJSONPath;
+@property(nonatomic, strong) RBAuthStore *store;
+- (BOOL)cookieExists;
+- (BOOL)authJSONExists;
+- (void)cleanup;
+@end
+
+@implementation RBTestAuthStoreFixture
+- (nullable instancetype)init {
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    NSString *baseTmp = NSTemporaryDirectory();
+    char resolvedRoot[PATH_MAX];
+    const char *rawTmp = baseTmp.fileSystemRepresentation;
+    if (rawTmp == NULL || realpath(rawTmp, resolvedRoot) == NULL) {
+        return nil;
+    }
+    NSString *templateStr = [[NSString stringWithUTF8String:resolvedRoot]
+        stringByAppendingPathComponent:@"rb-flow-store-test.XXXXXX"];
+    char dirTemplate[PATH_MAX];
+    snprintf(dirTemplate, sizeof(dirTemplate), "%s", templateStr.fileSystemRepresentation);
+    char *dirPath = mkdtemp(dirTemplate);
+    if (dirPath == NULL) {
+        return nil;
+    }
+    _rootPath = [NSString stringWithUTF8String:dirPath];
+    _basePath = [_rootPath stringByAppendingPathComponent:@"base"];
+    _cachesPath = [_rootPath stringByAppendingPathComponent:@"caches"];
+    _cookiePath = [_cachesPath stringByAppendingPathComponent:@"avcookie.na"];
+    _authJSONPath = [[_basePath stringByAppendingPathComponent:@"raspberry"]
+        stringByAppendingPathComponent:@"auth.json"];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *dirAttrs = @{NSFilePosixPermissions : @0700};
+    if (![fm createDirectoryAtPath:_basePath withIntermediateDirectories:NO attributes:dirAttrs error:NULL] ||
+        ![fm createDirectoryAtPath:_cachesPath withIntermediateDirectories:NO attributes:dirAttrs error:NULL]) {
+        [self cleanup];
+        return nil;
+    }
+    int fd = open(_cookiePath.fileSystemRepresentation,
+                  O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC,
+                  0600);
+    if (fd < 0) {
+        [self cleanup];
+        return nil;
+    }
+    const char cookieBytes[] = "stale-cookie";
+    ssize_t written = write(fd, cookieBytes, sizeof(cookieBytes) - 1);
+    close(fd);
+    if (written != (ssize_t)(sizeof(cookieBytes) - 1)) {
+        [self cleanup];
+        return nil;
+    }
+
+    _store = [[RBAuthStore alloc]
+        initWithBaseDirectoryURL:[NSURL fileURLWithPath:_basePath isDirectory:YES]
+              cachesDirectoryURL:[NSURL fileURLWithPath:_cachesPath isDirectory:YES]];
+    if (_store == nil) {
+        [self cleanup];
+        return nil;
+    }
+    return self;
+}
+
+- (BOOL)cookieExists {
+    struct stat st;
+    return lstat(_cookiePath.fileSystemRepresentation, &st) == 0;
+}
+
+- (BOOL)authJSONExists {
+    struct stat st;
+    return lstat(_authJSONPath.fileSystemRepresentation, &st) == 0;
+}
+
+- (void)cleanup {
+    if (_rootPath != nil) {
+        [[NSFileManager defaultManager] removeItemAtPath:_rootPath error:NULL];
+    }
+}
+@end
+
 @interface RBFlowTestRig : NSObject
 @property(nonatomic, strong) RBAuthFlowCoordinator *coordinator;
 @property(nonatomic, strong) RBFakeBrowserDriver *browser;
@@ -288,6 +435,7 @@ static void PumpMainQueue(NSUInteger iterations);
 @property(nonatomic, strong) NSObject *presentationOwner;
 @property(nonatomic, strong) RBFakeOwnerLiveness *ownerLiveness;
 @property(nonatomic, strong) RBEndpoint *endpoint;
+- (instancetype)initWithCommitter:(nullable id<RBAuthFlowCommitter>)committer;
 - (void)startWithRecorder:(nullable RBStatusRecorder *)recorder;
 - (void)completeActiveBrowserWithTicketForURL:(NSURL *)authorizationURL;
 - (NSNotification *)activeNotification;
@@ -295,6 +443,10 @@ static void PumpMainQueue(NSUInteger iterations);
 
 @implementation RBFlowTestRig
 - (instancetype)init {
+    return [self initWithCommitter:nil];
+}
+
+- (instancetype)initWithCommitter:(id<RBAuthFlowCommitter>)committer {
     self = [super init];
     if (self == nil) {
         return nil;
@@ -318,16 +470,30 @@ static void PumpMainQueue(NSUInteger iterations);
     CHECK(_endpoint != nil && error == nil, "synthetic endpoint parses");
 
     __weak RBFakeExchangeFactory *weakFactory = _exchangeFactory;
-    _coordinator = [[RBAuthFlowCoordinator alloc]
-        initWithBrowserDriver:_browser
-        owningApplication:_application
-        applicationDidBecomeActiveNotificationName:TestForegroundNotificationName
-        ownerLiveness:_ownerLiveness
-        exchangeFactory:^id<RBAuthFlowExchangeClient>(RBAuthExchangeRequest *request) {
+    RBAuthFlowExchangeFactory factoryBlock =
+        ^id<RBAuthFlowExchangeClient>(RBAuthExchangeRequest *request) {
             return [weakFactory makeClientForRequest:request];
-        }
-        scheduler:_scheduler
-        attemptClock:_clock];
+        };
+    if (committer == nil) {
+        _coordinator = [[RBAuthFlowCoordinator alloc]
+            initWithBrowserDriver:_browser
+            owningApplication:_application
+            applicationDidBecomeActiveNotificationName:TestForegroundNotificationName
+            ownerLiveness:_ownerLiveness
+            exchangeFactory:factoryBlock
+            scheduler:_scheduler
+            attemptClock:_clock];
+    } else {
+        _coordinator = [[RBAuthFlowCoordinator alloc]
+            initWithBrowserDriver:_browser
+            owningApplication:_application
+            applicationDidBecomeActiveNotificationName:TestForegroundNotificationName
+            ownerLiveness:_ownerLiveness
+            exchangeFactory:factoryBlock
+            scheduler:_scheduler
+            attemptClock:_clock
+            committer:committer];
+    }
     CHECK(_coordinator != nil, "coordinator initializes with injected fakes");
     return self;
 }
@@ -448,8 +614,10 @@ static void TestTicketArmsAndExactForegroundClaimsOnce(void) {
           "status observer sees a fixed sequence of state changes");
     for (NSNumber *status in recorder.statuses) {
         CHECK(status.integerValue >= RBAuthFlowStatusIdle &&
-                  status.integerValue <= RBAuthFlowStatusExpired,
-              "observer receives only fixed status enum values");
+                  status.integerValue <= RBAuthFlowStatusCommitFailed &&
+                  status.integerValue != RBAuthFlowStatusAuthorized &&
+                  status.integerValue != RBAuthFlowStatusCommitFailed,
+              "observer receives only fixed pre-commit status enum values");
     }
 }
 
@@ -762,6 +930,257 @@ static void TestCancellationFencesBrowserAndOffMainCancelIsRefused(void) {
           "late callback cannot revive a cancelled attempt");
 }
 
+static void AdvanceRigToExchangeInProgress(RBFlowTestRig *rig,
+                                           RBStatusRecorder * _Nullable recorder) {
+    [rig startWithRecorder:recorder];
+    [rig completeActiveBrowserWithTicketForURL:rig.browser.lastAuthorizationURL];
+    CHECK([rig.coordinator applicationDidBecomeActive:[rig activeNotification]] ==
+              RBAuthFlowStatusExchangeInProgress,
+          "rig advances to exchange in progress");
+}
+
+static void TestAuthorizedCommitWithRealAuthStore(void) {
+    RBTestAuthStoreFixture *fixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(fixture != nil, "auth store temp fixture created");
+    if (fixture == nil) {
+        return;
+    }
+    CHECK([fixture.store conformsToProtocol:@protocol(RBAuthFlowCommitter)],
+          "RBAuthStore conforms to RBAuthFlowCommitter");
+    CHECK([fixture cookieExists] && ![fixture authJSONExists],
+          "fixture starts with avcookie.na and no auth.json");
+
+    RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:fixture.store];
+    RBStatusRecorder *recorder = [[RBStatusRecorder alloc] init];
+    AdvanceRigToExchangeInProgress(rig, recorder);
+
+    [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                error:RBAuthExchangeClientErrorNone];
+    PumpMainQueue(5);
+
+    CHECK(rig.coordinator.status == RBAuthFlowStatusAuthorized,
+          "real RBAuthStore commit transitions coordinator to Authorized");
+    CHECK(recorder.callbacksStayedOnMainThread,
+          "authorized status callback stays on main thread");
+    CHECK(recorder.statuses.count >= 5 &&
+              recorder.statuses.lastObject.integerValue == RBAuthFlowStatusAuthorized,
+          "status recorder ends at RBAuthFlowStatusAuthorized");
+    CHECK(![fixture cookieExists],
+          "authorized commit removes avcookie.na");
+    CHECK([fixture authJSONExists],
+          "authorized commit persists auth.json");
+
+    NSError *readError = nil;
+    NSString *storedCode =
+        [fixture.store authorizedUniqueCodeForEndpoint:rig.endpoint error:&readError];
+    CHECK(readError == nil && [storedCode isEqualToString:SyntheticExchangeCode()],
+          "store returns exact minted uniqueCode for endpoint");
+
+    [rig.coordinator applicationDidBecomeActive:[rig activeNotification]];
+    [rig.exchangeFactory.clients[0] completeWithCode:@"00000000-0000-4000-8000-000000000002"
+                                                error:RBAuthExchangeClientErrorNone];
+    PumpMainQueue(5);
+    CHECK(rig.coordinator.status == RBAuthFlowStatusAuthorized,
+          "late events after Authorized cannot alter status or overwrite credential");
+    storedCode =
+        [fixture.store authorizedUniqueCodeForEndpoint:rig.endpoint error:&readError];
+    CHECK(readError == nil && [storedCode isEqualToString:SyntheticExchangeCode()],
+          "late delivery preserves original committed uniqueCode");
+
+    [fixture cleanup];
+}
+
+static void TestFailingCommitterReturnsCommitFailed(void) {
+    RBFakeAuthCommitter *failingCommitter = [[RBFakeAuthCommitter alloc] init];
+    failingCommitter.shouldSucceed = NO;
+    RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:failingCommitter];
+    RBStatusRecorder *recorder = [[RBStatusRecorder alloc] init];
+    AdvanceRigToExchangeInProgress(rig, recorder);
+
+    [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                error:RBAuthExchangeClientErrorNone];
+    PumpMainQueue(5);
+
+    CHECK(failingCommitter.commitCalls == 1 && failingCommitter.committedOnMainThread,
+          "failing committer is invoked once on main thread");
+    CHECK(rig.coordinator.status == RBAuthFlowStatusCommitFailed,
+          "failing committer transitions coordinator to CommitFailed");
+    CHECK(recorder.statuses.lastObject.integerValue == RBAuthFlowStatusCommitFailed,
+          "status handler observes CommitFailed");
+
+    RBTestAuthStoreFixture *fixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(fixture != nil, "auth store failure fixture created");
+    if (fixture == nil) {
+        return;
+    }
+    RBFlowTestRig *storeRig = [[RBFlowTestRig alloc] initWithCommitter:fixture.store];
+    RBStatusRecorder *storeRecorder = [[RBStatusRecorder alloc] init];
+    AdvanceRigToExchangeInProgress(storeRig, storeRecorder);
+    [storeRig.exchangeFactory.clients[0] completeWithCode:@"not-a-canonical-uuid"
+                                                     error:RBAuthExchangeClientErrorNone];
+    PumpMainQueue(5);
+    CHECK(storeRig.coordinator.status == RBAuthFlowStatusCommitFailed &&
+              storeRecorder.statuses.lastObject.integerValue == RBAuthFlowStatusCommitFailed,
+          "RBAuthStore commit rejection transitions to CommitFailed");
+    CHECK([fixture cookieExists] && ![fixture authJSONExists],
+          "failed RBAuthStore commit leaves avcookie.na intact and writes no auth.json");
+    NSError *readError = nil;
+    CHECK([fixture.store authorizedUniqueCodeForEndpoint:storeRig.endpoint error:&readError] == nil &&
+              readError != nil &&
+              [readError.domain isEqualToString:RBAuthStoreErrorDomain] &&
+              readError.code == RBAuthStoreErrorNotFound,
+          "failed commit writes no stored credential");
+    [fixture cleanup];
+}
+
+static void TestAttemptTerminatedBeforeCommitDoesNotInvokeCommitter(void) {
+    // 1. Cancelled before exchange completion arrives.
+    RBTestAuthStoreFixture *cancelFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(cancelFixture != nil, "cancel fixture created");
+    if (cancelFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = cancelFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        AdvanceRigToExchangeInProgress(rig, nil);
+        CHECK([rig.coordinator cancelCurrentAttempt] == RBAuthFlowStatusCancelled,
+              "cancel during exchange is terminal");
+        [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                    error:RBAuthExchangeClientErrorNone];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusCancelled && spy.commitCalls == 0,
+              "cancelled attempt never invokes committer");
+        CHECK([cancelFixture cookieExists] && ![cancelFixture authJSONExists],
+              "cancelled attempt preserves avcookie.na and writes no auth.json");
+        [cancelFixture cleanup];
+    }
+
+    // 2. Superseded by new attempt before stale exchange completion arrives.
+    RBTestAuthStoreFixture *supersedeFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(supersedeFixture != nil, "supersede fixture created");
+    if (supersedeFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = supersedeFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        AdvanceRigToExchangeInProgress(rig, nil);
+        RBFakeExchangeClient *staleClient = rig.exchangeFactory.clients[0];
+        [rig startWithRecorder:nil];
+        [staleClient completeWithCode:SyntheticExchangeCode()
+                                error:RBAuthExchangeClientErrorNone];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusBrowserPresented && spy.commitCalls == 0,
+              "superseded exchange result never invokes committer");
+        CHECK([supersedeFixture cookieExists] && ![supersedeFixture authJSONExists],
+              "superseded attempt preserves avcookie.na and writes no auth.json");
+        [supersedeFixture cleanup];
+    }
+
+    // 3. Foreground lost before commit.
+    RBTestAuthStoreFixture *fgFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(fgFixture != nil, "foreground-loss fixture created");
+    if (fgFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = fgFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        RBStatusRecorder *recorder = [[RBStatusRecorder alloc] init];
+        AdvanceRigToExchangeInProgress(rig, recorder);
+        rig.ownerLiveness.active = NO;
+        [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                    error:RBAuthExchangeClientErrorNone];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusForegroundLost &&
+                  recorder.statuses.lastObject.integerValue == RBAuthFlowStatusForegroundLost &&
+                  spy.commitCalls == 0,
+              "foreground loss before commit transitions to ForegroundLost without invoking committer");
+        CHECK([fgFixture cookieExists] && ![fgFixture authJSONExists],
+              "foreground loss preserves avcookie.na and writes no auth.json");
+        [fgFixture cleanup];
+    }
+
+    // 4. Attempt expired before exchange result is handled (without timer firing).
+    RBTestAuthStoreFixture *expFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(expFixture != nil, "expiry fixture created");
+    if (expFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = expFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        RBStatusRecorder *recorder = [[RBStatusRecorder alloc] init];
+        AdvanceRigToExchangeInProgress(rig, recorder);
+        rig.clock.now = 135.0;
+        [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                    error:RBAuthExchangeClientErrorNone];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusExpired &&
+                  recorder.statuses.lastObject.integerValue == RBAuthFlowStatusExpired &&
+                  spy.commitCalls == 0,
+              "expired attempt before commit transitions to Expired without invoking committer");
+        CHECK([expFixture cookieExists] && ![expFixture authJSONExists],
+              "expired attempt preserves avcookie.na and writes no auth.json");
+        [expFixture cleanup];
+    }
+
+    // 5. Attempt expires during liveness probe right before commitWithWriter:.
+    RBTestAuthStoreFixture *raceExpFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(raceExpFixture != nil, "liveness-race expiry fixture created");
+    if (raceExpFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = raceExpFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        RBStatusRecorder *recorder = [[RBStatusRecorder alloc] init];
+        AdvanceRigToExchangeInProgress(rig, recorder);
+        __weak RBFlowTestRig *weakRig = rig;
+        rig.ownerLiveness.checkHook = ^{
+            weakRig.clock.now = 135.0;
+        };
+        [rig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                    error:RBAuthExchangeClientErrorNone];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusExpired &&
+                  recorder.statuses.lastObject.integerValue == RBAuthFlowStatusExpired &&
+                  spy.commitCalls == 0,
+              "attempt expiry observed under commitWithWriter lock refuses writer invocation");
+        CHECK([raceExpFixture cookieExists] && ![raceExpFixture authJSONExists],
+              "lock-serialized expiry preserves avcookie.na and writes no auth.json");
+        [raceExpFixture cleanup];
+    }
+
+    // 6. Exchange failure with committer configured does not invoke committer.
+    RBTestAuthStoreFixture *errFixture = [[RBTestAuthStoreFixture alloc] init];
+    CHECK(errFixture != nil, "exchange-error fixture created");
+    if (errFixture != nil) {
+        RBFakeAuthCommitter *spy = [[RBFakeAuthCommitter alloc] init];
+        spy.innerCommitter = errFixture.store;
+        RBFlowTestRig *rig = [[RBFlowTestRig alloc] initWithCommitter:spy];
+        AdvanceRigToExchangeInProgress(rig, nil);
+        [rig.exchangeFactory.clients[0] completeWithCode:nil
+                                                    error:RBAuthExchangeClientErrorHTTPStatus];
+        PumpMainQueue(5);
+        CHECK(rig.coordinator.status == RBAuthFlowStatusFailed && spy.commitCalls == 0,
+              "exchange error does not invoke committer");
+        CHECK([errFixture cookieExists] && ![errFixture authJSONExists],
+              "exchange error preserves avcookie.na and writes no auth.json");
+        [errFixture cleanup];
+    }
+
+    // 7. Reentrant cancel inside committer leaves coordinator Cancelled and never Authorized.
+    RBFakeAuthCommitter *reentrantCommitter = [[RBFakeAuthCommitter alloc] init];
+    RBFlowTestRig *reentrantRig = [[RBFlowTestRig alloc] initWithCommitter:reentrantCommitter];
+    RBStatusRecorder *reentrantRecorder = [[RBStatusRecorder alloc] init];
+    __weak RBFlowTestRig *weakReentrantRig = reentrantRig;
+    reentrantCommitter.reentrancyHandler = ^{
+        [weakReentrantRig.coordinator cancelCurrentAttempt];
+    };
+    AdvanceRigToExchangeInProgress(reentrantRig, reentrantRecorder);
+    [reentrantRig.exchangeFactory.clients[0] completeWithCode:SyntheticExchangeCode()
+                                                         error:RBAuthExchangeClientErrorNone];
+    PumpMainQueue(5);
+    CHECK(reentrantCommitter.commitCalls == 1 &&
+              reentrantRig.coordinator.status == RBAuthFlowStatusCancelled &&
+              reentrantRecorder.statuses.lastObject.integerValue == RBAuthFlowStatusCancelled &&
+              ![reentrantRecorder.statuses containsObject:@(RBAuthFlowStatusAuthorized)] &&
+              ![reentrantRecorder.statuses containsObject:@(RBAuthFlowStatusCommitFailed)],
+          "reentrant cancel during committer stays Cancelled without Authorized or CommitFailed");
+}
+
 int main(void) {
     @autoreleasepool {
         TestTicketArmsAndExactForegroundClaimsOnce();
@@ -777,6 +1196,9 @@ int main(void) {
         TestCancellationFencesExchangeResult();
         TestAttemptDeadlineCancelsBrowserAndFencesCallback();
         TestCancellationFencesBrowserAndOffMainCancelIsRefused();
+        TestAuthorizedCommitWithRealAuthStore();
+        TestFailingCommitterReturnsCommitFailed();
+        TestAttemptTerminatedBeforeCommitDoesNotInvokeCommitter();
     }
     if (failures != 0) {
         fprintf(stderr, "%d auth-flow composition test(s) failed\n", failures);
