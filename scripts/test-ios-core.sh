@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-only tests for pure-C image selection and Foundation endpoint/auth/URL cores.
+# Host tests for Foundation/C iOS cores, including fake browser ownership.
 # Compiles pure C sources, then links their objects with Objective-C sources.
 set -eu
 
@@ -93,3 +93,75 @@ clang -DRB_AUTH_EXCHANGE_TESTING=1 -fblocks -fobjc-arc -Wall -Wextra -Werror \
     -o "$tmp/auth_exchange_test" || fail 'compile Foundation auth-exchange tests'
 
 "$tmp/auth_exchange_test" || fail 'auth-exchange tests failed'
+
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" \
+    "$root/ios/RBAuthBrowserSession.m" "$root/ios/browser_session_test.m" \
+    "$tmp/endpoint.o" \
+    -framework Foundation -framework Security \
+    -o "$tmp/browser_session_test" || fail 'compile Foundation browser-session fake tests'
+
+"$tmp/browser_session_test" || fail 'browser-session fake tests failed'
+
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" \
+    "$root/ios/RBAuthBrowserSession.m" "$root/ios/RBAuthExchangeClient.m" \
+    "$root/ios/RBAuthFlowCoordinator.m" \
+    "$root/ios/auth_flow_coordinator_test.m" "$tmp/endpoint.o" \
+    -framework Foundation -framework Security -framework CoreFoundation \
+    -o "$tmp/auth_flow_coordinator_test" ||
+    fail 'compile Foundation auth-flow coordinator fake tests'
+
+"$tmp/auth_flow_coordinator_test" ||
+    fail 'auth-flow coordinator fake tests failed'
+
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" \
+    "$root/ios/RBAuthUIKitLifecycleStatusGate.m" \
+    "$root/ios/auth_uikit_lifecycle_status_gate_test.m" \
+    -framework Foundation \
+    -o "$tmp/auth_uikit_lifecycle_status_gate_test" ||
+    fail 'compile UIKit lifecycle status-gate tests'
+
+"$tmp/auth_uikit_lifecycle_status_gate_test" ||
+    fail 'UIKit lifecycle status-gate tests failed'
+
+clang -DRB_NOTICE_ROUTE_TESTING=1 -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBURLRewrite.m" \
+    "$root/ios/RBNoticeRouteClient.m" "$root/ios/RBNoticeRouteErrorAdapter.m" \
+    "$root/ios/notice_route_client_test.m" "$tmp/endpoint.o" \
+    -framework Foundation \
+    -o "$tmp/notice_route_client_test" ||
+    fail 'compile Foundation notice-route client tests'
+
+"$tmp/notice_route_client_test" ||
+    fail 'notice-route client tests failed'
+
+if command -v xcrun >/dev/null 2>&1; then
+    if sdk=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null) &&
+        [ -d "$sdk" ]; then
+        xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
+            -isysroot "$sdk" -std=c11 -Wall -Wextra -Werror \
+            -I"$root/native" -c "$root/native/endpoint.c" \
+            -o "$tmp/endpoint-ios15.o" ||
+            fail 'cross-compile endpoint C core for iOS 15'
+
+        for source in RBEndpoint RBURLRewrite RBAuthAttempt RBAuthBrowserSession \
+            RBAuthExchangeClient RBAuthFlowCoordinator \
+            RBNoticeRouteClient RBNoticeRouteErrorAdapter \
+            RBAuthUIKitOwnerConditions RBASWebAuthenticationSessionDriver \
+            RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding; do
+            xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
+                -isysroot "$sdk" -fblocks -fobjc-arc \
+                -Wall -Wextra -Werror \
+                -I"$root/ios" -I"$root/native" \
+                -c "$root/ios/$source.m" \
+                -o "$tmp/$source-ios15.o" ||
+                fail "cross-compile $source for arm64 iOS 15"
+        done
+        printf 'iOS core arm64 SDK compile: ok\n'
+    fi
+fi

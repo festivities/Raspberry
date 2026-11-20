@@ -1,9 +1,12 @@
 #import "RBEndpoint.h"
 
 #import <CoreFoundation/CoreFoundation.h>
+#import <limits.h>
 #import <stdio.h>
 #import <stdlib.h>
 #import <string.h>
+#import <sys/stat.h>
+#import <unistd.h>
 
 static int failures = 0;
 
@@ -178,6 +181,110 @@ static void TestOptionalInputsAndErrors(void) {
     CHECK([RBEndpoint endpointWithJSONData:valid error:&error] != nil && error == nil, "stale error cleared");
 }
 
+static void ExpectFileReject(NSURL *url, RBEndpointErrorCode code, const char *label) {
+    NSError *error = nil;
+    RBEndpoint *endpoint = [RBEndpoint endpointFromFileURL:url error:&error];
+    CHECK(endpoint == nil, label);
+    CHECK(error != nil && [error.domain isEqualToString:RBEndpointErrorDomain], "file error domain");
+    CHECK(error.code == code, label);
+    CHECK(error.localizedDescription.length > 0, "file error message non-empty");
+    if (url != nil && url.lastPathComponent.length > 0) {
+        CHECK(![error.localizedDescription containsString:url.lastPathComponent],
+              "file error does not echo filename");
+    }
+}
+
+static void TestFileLoader(void) {
+    NSString *baseTmp = NSTemporaryDirectory();
+    char resolvedRoot[PATH_MAX];
+    const char *rawTmp = baseTmp.fileSystemRepresentation;
+    CHECK(realpath(rawTmp, resolvedRoot) != NULL, "canonicalize temp root");
+    if (realpath(rawTmp, resolvedRoot) == NULL) {
+        return;
+    }
+
+    NSString *templateStr = [[NSString stringWithUTF8String:resolvedRoot]
+        stringByAppendingPathComponent:@"rb-endpoint-test.XXXXXX"];
+    char dirTemplate[PATH_MAX];
+    snprintf(dirTemplate, sizeof(dirTemplate), "%s", templateStr.fileSystemRepresentation);
+    char *dirPath = mkdtemp(dirTemplate);
+    CHECK(dirPath != NULL, "create temp dir for file loader tests");
+    if (dirPath == NULL) {
+        return;
+    }
+
+    NSString *dir = [NSString stringWithUTF8String:dirPath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSString *validPath = [dir stringByAppendingPathComponent:@"valid-endpoint.json"];
+    NSData *validData = [@"{\"v\":1,\"host\":\"File.Example.Test\",\"ports\":{\"443\":8443}}"
+        dataUsingEncoding:NSUTF8StringEncoding];
+    CHECK([validData writeToFile:validPath atomically:YES], "write valid endpoint file");
+    NSURL *validURL = [NSURL fileURLWithPath:validPath];
+    NSError *error = [NSError errorWithDomain:@"stale" code:1 userInfo:nil];
+    RBEndpoint *loaded = [RBEndpoint endpointFromFileURL:validURL error:&error];
+    CHECK(loaded != nil && error == nil, "load valid endpoint file and clear stale error");
+    CHECK([loaded.host isEqualToString:@"file.example.test"], "file loader host");
+    CHECK([loaded.httpsOrigin isEqualToString:@"https://file.example.test:8443"], "file loader origin");
+    CHECK([loaded mappedPortForOriginalClientPort:443] == 8443, "file loader mapped 443");
+    CHECK([RBEndpoint endpointFromFileURL:validURL error:NULL] != nil, "file loader optional error");
+
+    NSString *exactLimitPath = [dir stringByAppendingPathComponent:@"exact-4096.json"];
+    NSString *exactPadding = [@"" stringByPaddingToLength:4096u - validData.length
+                                               withString:@" "
+                                          startingAtIndex:0];
+    NSMutableData *exactData = [NSMutableData dataWithData:validData];
+    [exactData appendData:[exactPadding dataUsingEncoding:NSUTF8StringEncoding]];
+    CHECK(exactData.length == 4096u, "exact 4096 byte fixture");
+    CHECK([exactData writeToFile:exactLimitPath atomically:YES], "write exact 4096 byte file");
+    RBEndpoint *exactLoaded = [RBEndpoint endpointFromFileURL:[NSURL fileURLWithPath:exactLimitPath]
+                                                        error:&error];
+    CHECK(exactLoaded != nil && error == nil, "exact 4096 byte endpoint file accepted");
+
+    NSString *missingPath = [dir stringByAppendingPathComponent:@"missing-endpoint.json"];
+    ExpectFileReject([NSURL fileURLWithPath:missingPath], RBEndpointErrorUnreadable, "missing file");
+
+    NSString *symlinkPath = [dir stringByAppendingPathComponent:@"symlink-endpoint.json"];
+    CHECK(symlink(validPath.fileSystemRepresentation, symlinkPath.fileSystemRepresentation) == 0,
+          "create symlink fixture");
+    ExpectFileReject([NSURL fileURLWithPath:symlinkPath], RBEndpointErrorUnreadable, "symlink refused");
+
+    NSString *subDirPath = [dir stringByAppendingPathComponent:@"subdir.json"];
+    CHECK([fm createDirectoryAtPath:subDirPath withIntermediateDirectories:NO attributes:nil error:NULL],
+          "create subdir fixture");
+    ExpectFileReject([NSURL fileURLWithPath:subDirPath isDirectory:YES],
+                     RBEndpointErrorUnreadable, "directory refused");
+
+    NSString *emptyPath = [dir stringByAppendingPathComponent:@"empty.json"];
+    CHECK([[NSData data] writeToFile:emptyPath atomically:YES], "write empty file");
+    ExpectFileReject([NSURL fileURLWithPath:emptyPath], RBEndpointErrorEmpty, "empty file");
+
+    NSString *whitespacePath = [dir stringByAppendingPathComponent:@"whitespace.json"];
+    CHECK([[@"  \n\t " dataUsingEncoding:NSUTF8StringEncoding] writeToFile:whitespacePath atomically:YES],
+          "write whitespace file");
+    ExpectFileReject([NSURL fileURLWithPath:whitespacePath], RBEndpointErrorEmpty, "whitespace file");
+
+    NSString *oversizedPath = [dir stringByAppendingPathComponent:@"oversized.json"];
+    NSMutableData *oversizedData = [NSMutableData dataWithData:exactData];
+    [oversizedData appendBytes:" " length:1];
+    CHECK(oversizedData.length == 4097u, "4097 byte fixture");
+    CHECK([oversizedData writeToFile:oversizedPath atomically:YES], "write oversized file");
+    ExpectFileReject([NSURL fileURLWithPath:oversizedPath], RBEndpointErrorTooLarge, "oversized file");
+
+    NSString *badJSONPath = [dir stringByAppendingPathComponent:@"bad-json.json"];
+    CHECK([[@"{\"v\":1," dataUsingEncoding:NSUTF8StringEncoding] writeToFile:badJSONPath atomically:YES],
+          "write invalid JSON file");
+    ExpectFileReject([NSURL fileURLWithPath:badJSONPath], RBEndpointErrorNotJSON, "invalid JSON file");
+
+    ExpectFileReject(nil, RBEndpointErrorUnreadable, "nil file URL");
+    ExpectFileReject([NSURL URLWithString:@"https://example.test/endpoint.json"],
+                     RBEndpointErrorUnreadable, "non-file URL");
+    CHECK([RBEndpoint endpointFromFileURL:[NSURL fileURLWithPath:missingPath] error:NULL] == nil,
+          "file loader optional error on failure");
+
+    [fm removeItemAtPath:dir error:NULL];
+}
+
 int main(void) {
     @autoreleasepool {
         TestDefaultsAndCase();
@@ -188,6 +295,7 @@ int main(void) {
         TestImmutabilityAndConfigCopy();
         TestErrorDoesNotEchoInput();
         TestOptionalInputsAndErrors();
+        TestFileLoader();
     }
     if (failures != 0) {
         fprintf(stderr, "%d endpoint test(s) failed\n", failures);

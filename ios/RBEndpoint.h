@@ -19,6 +19,7 @@ typedef NS_ENUM(NSInteger, RBEndpointErrorCode) {
     RBEndpointErrorPortsInvalid,
     RBEndpointErrorPortKeyNotAllowed,
     RBEndpointErrorPortOutOfRange,
+    RBEndpointErrorUnreadable,
 };
 
 /// Immutable, side-effect-free representation of the v1 endpoint descriptor.
@@ -33,6 +34,8 @@ typedef NS_ENUM(NSInteger, RBEndpointErrorCode) {
 
 + (nullable instancetype)endpointWithJSONData:(nullable NSData *)data
                                       error:(NSError * _Nullable * _Nullable)error;
++ (nullable instancetype)endpointFromFileURL:(nullable NSURL *)fileURL
+                                       error:(NSError * _Nullable * _Nullable)error;
 
 /// Returns the mapped port for a supported original client port, or the input
 /// unchanged for other ports.

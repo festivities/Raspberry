@@ -6,6 +6,8 @@ Durable rules, lab facts and client facts for agents working on Raspberry. Keep 
 - [CONTRACT.md](CONTRACT.md) — the client half of the interface with Cherry servers. This repo is authoritative for it. The server half is Cherry's `D:\Dev\projects\Cherry\.agents\CONTRACT.md` (read-only for you).
 - [HISTORY.md](HISTORY.md) — dated evidence, superseded snapshots and old handoffs (verbatim; never overrides AGENTS/PLAN).
 
+**HANDOFF INITIATED (2026-11-20):** the user is moving to a new session with no chat context. Read `.agents/PLAN.md` section "HANDOFF INITIATED — 2026-11-20" before any work, then append HANDOFF ACCEPTED. No subagent is running. Current iOS task is a simulated missing-notice diagnostic on `myphone`; two launches reached avatar introduction without the closure notice and without a new crash, but the diagnostic entry is not proven. A second result-file design is worker-reported only and is not approved for packaging or a guest run. Keep chat at compatibility and test-status level; do not restate binary-edit steps. Cherry stays read-only. Do not commit unless the user asks.
+
 **Sister project: Cherry** — `D:\Dev\projects\Cherry` (GitHub `festivities/Cherry`), the Go server emulator for the same game. Its `.agents\AGENTS.md` ("Architecture", "Tooling rules", "Known client-inherent limits", "Lab") and `.agents\PLAN.md` hold most of the reverse-engineering evidence; the facts you need are copied below with their evidence tags. Cherry's working notes are in `%TEMP%\opencode\cherry\` (read-only for you; yours go in `%TEMP%\opencode\raspberry\`). A separate session works on Cherry at the same time ("Two sessions").
 
 **Harness (user, 2026-11-10):** Raspberry uses **OpenCode**, not Claude Code. Use the tools, generic subagents and permissions exposed by the current OpenCode session. Historical `.claude/` instructions are not setup requirements for Raspberry; do not edit harness settings to bypass permissions or create project agents without asking.
@@ -244,3 +246,203 @@ Implementation is in progress across `cmd/raspberry`, `internal/{apk,baseline,de
 **Loopback preparation:** the static report supports `CURLOPT_RESOLVE` and CAINFO fixture-only verification. Fake-only local-address setup tests and private offline cert generation are active. No system trust change, listener, deployed adapter, or verified in-process curl lifecycle.
 
 **Loopback mapping and certificate checks passed:** the runner requires the fixed synthetic mapping and CA path under host fakes. The private certificate matrix is generated and host-verified; a bounded synthetic loopback listener is in implementation. Nothing deployed or changed on `myphone` or Cherry.
+
+**Fixture listener review:** the Go host reference must accept the distinct synthetic HTTP Host, not the certificate's TLS hostname. That correction and a separate private compile-only iOS listener are active. No device deployment or bundled curl lifecycle approval.
+
+**Host separation regression verified:** the corrected private Go fixture distinguishes TLS name and HTTP Host, and the full host race suite passes. Private RE is checking the exact launch enqueue site as a candidate curl lifecycle rendezvous; the iOS-native listener is not deployed.
+
+**After quota renewal:** listener correction and precise startup rendezvous research resumed on Luna max. A separate private build-only helper will import just the supplied synthetic identity into process memory via the installed iOS API; no system trust change, live credentials or deployment.
+
+**Native listener link check:** corrected wrong-name test no longer lets the server's SNI checks hide a curl acceptance bug. Main reran its strict iOS compile/link; a private synthetic macOS loopback smoke is active next. No guest changes or native curl result.
+
+**Fixture identity link check:** main reviewed and built the private, leaf-matched, memory-only PKCS#12 helper. This is compile/link evidence only; there has been no guest import or change to keychain or trust state.
+
+**Startup TLS diagnostic decision:** request-82 enqueue is not a successful-init or teardown fence for bundled curl. Do not attach a separate transfer there. A private design review is comparing a stock-owned transfer boundary with an independent Apple-framework account transport; no deployment or live credential transport.
+
+**TLS alternatives review:** Network.framework is the preferred exploratory path, not an approved replacement. Besides synthetic runtime evidence, it needs native response integration and a full inventory of outgoing session credentials. The latter is in static review; no credentials or device accessed.
+
+**Native listener host smoke:** main reproduced the private macOS loopback matrix using host curl against the Network.framework listener. The valid case returned HTTP 200 with distinct TLS name/HTTP Host; both certificate failures reached zero HTTP requests. No iOS client or guest result.
+
+**Apple client host smoke:** main reproduced the synthetic verification matrix with Network.framework on both sides, including specific rejection reasons and zero negative HTTP sends. It proves macOS fixture behavior only. An iOS SDK compile/link check is active; no deployment or trust change.
+
+**Apple client iOS link:** main reproduced the SDK compile/link including the private identity helper. A separate bounded core for a real synthetic matrix is in progress; link-only code is not an acceptance runner. Nothing signed, installed, or run on iOS.
+
+**iOS matrix core link:** main reproduced compile/link of the separate synthetic matrix core and checked its positive/negative acceptance predicates. Lifecycle review and standalone packaging are pending before an iOS runtime test.
+
+**Native credential scope:** static review confirms account-only TLS would miss later `AV_AUTH`-bearing requests, including generic cookie forwarding and credential-derived headers. Keep account gating separate from the transport confidentiality boundary; do not send live credentials until the final outbound paths are covered.
+
+**Fixture teardown fix:** main reviewed and rebuilt the stop-on-unconfirmed-client-cancellation change. The wrapper is in progress; no app installation or guest test yet.
+
+**Standalone fixture guest test:** main reviewed and privately packaged the separate loopback-only UIKit app. One bounded `myphone` TLS matrix is now delegated for `org.raspberry.fixture.tls` only. No result yet; this is not LINE PLAY integration or normal provisioning acceptance.
+
+**Standalone fixture install:** vphoned installed the previously absent fixture without upgrading anything. Auto-lock intervened before launch; the follow-up is the first launch and one Start, with no settings change or reinstall.
+
+**Standalone fixture launch failure:** first launch trapped in UIKit’s missing-scene-lifecycle check before Start. The private crash is preserved; own wrapper scene adoption is in progress, with no TLS result or LINE PLAY change.
+
+**Standalone fixture scene fix:** main reviewed, rebuilt and privately packaged the build-2 UIKit wrapper. A bounded same-bundle update/launch and one Start are delegated on `myphone`; old package and crash retained.
+
+**Standalone fixture Start failure:** build 2 reached Ready, then crashed in Security.framework’s memory-only PKCS#12 import after one valid Start. The private report is preserved. Synthetic RSA fixture material and a fixed import-error path are being prepared; no TLS result or LINE PLAY change.
+
+**RSA fixture test:** main reviewed and rebuilt build 3 and its offline RSA fixture matrix. One same-bundle `myphone` update and test is active; previous evidence preserved. No runtime result yet.
+
+**iOS TLS fixture runtime pass:** build 3 completed all three synthetic loopback cases on `myphone`; main independently read verified UI and confirmed no new crash. Both negative cases sent zero HTTP. This is standalone Network.framework evidence, not in-game TLS, Cherry, or Discord acceptance. Next is credential-free game transport integration design.
+
+**Verified HTTPS design:** reviewed the private transport tradeoffs. Static review of the final outbound/native response boundary is active so the next useful integration test covers actual game request handling, not just the same synthetic transport in another process. No deployment or live credentials.
+
+**Cherry contract reply:** the operator HTTPS origin can be used as both TLS identity and HTTP Host, so evaluate normal `NSURLSession` for mapped game HTTPS. The iOS manifest is still unserved; independent static manifest/list/path and event-notice work is active. Android re-auth and missing client captures stay open, not active.
+
+**Native HTTPS boundary:** static evidence maps common ADI handling for known APIs, media and uploads, but not exhaustive mapped-route coverage or a safe response adapter. A private no-network GET-planning prototype is active separately from asset research.
+
+**GET planner:** main reproduced the no-network prototype tests and iOS compile. This is a constrained request-shape proof only. A static single-GET completion trace is active alongside independent asset research; no bridge or transport deployment.
+
+**Native GET completion:** scoped shop trace found generic cookie attachment and cURL-coupled native response handling; no direct `NSURLSession` completion seam is proven. Exact empty-query planner correction and a static native response-writer trace are active.
+
+**Planner correction:** exact empty `parentIconId=` regression and strict query rejection pass main's host and iOS compile rerun. Still no native or network effect.
+
+**ADI writer decision:** no safe stock finalizer for an Apple-transport result was established. A stock-owned verification feasibility trace is active; do not fabricate cURL metadata or change global behavior.
+
+**Stock-owned TLS feasibility:** verification controls are present; retry can reset them. An exact per-attempt seam review is active. Neither isolated runtime behavior nor system-root trust is established for the bundled client.
+
+**Per-attempt TLS seam:** static review located a candidate after stock GET setup, including retries. A private pure metadata gate is active; no selected stock request is established as credential-free, and no runtime probe is ready.
+
+**Fixture attempt model:** main reproduced host-fake tests and iOS compile. This checks metadata decisions only; a static passthrough-marker ABI study is active and no game transport code is deployed.
+
+**Metadata marker decision:** static design is not approved for guest execution. It would report presence only while stock networking could still send; a next native TLS spike must fail closed before egress.
+
+**First-run iOS assets:** static report supplies event-notice spelling plus manifest categories and follow-on list/file URL templates. The Cherry relay is in CONTRACT; root/version and exact list grammar are still being checked. No runtime assets accepted.
+
+**Manifest selector:** static addendum confirms `ios["10.1.0"]` selects the string key in `resource`. List blocks are bracket-scanned; no real list or tree is verified. Read-only artifact inventory active.
+
+**iOS artifact inventory:** no matching manifest or update lists found by filename in the supplied archive and checked private extraction. An offline synthetic parser fixture is active; original iOS asset material remains missing.
+
+**Offline asset fixture:** main reproduced the private Go tests for the synthetic manifest and fixed `[]` list responses. No listener, guest parser, real assets or gameplay result.
+
+**User requested continuation:** host-fake preflight denial implementation and its separate exact static binding review are both active. Neither is a patched-game or device run.
+
+**Synthetic denial model:** main reproduced sanitizer tests and iOS compile-only output. Fake denial/cleanup passes; exact native binding review is still active.
+
+**Denial binding decision:** the stock failure branch is visible statically, but no activation or safe live binding is approved. An offline read-only layout/branch verifier is active; no executable edit.
+
+**Read-only layout:** main reproduced synthetic race tests; fitting a branch/veneer is not a safe activation. An isolated native-construction feasibility check is active; normal shop traffic is not a test trigger.
+
+**Native denial self-test:** static evidence identifies authentic test-owned construction and cleanup; a link-only/fake harness is active. It tests the common null-initial-state branch only and does not validate a live worker or transport.
+
+**Paused 2026-11-19 at user request:** see the pause checkpoint at the top of PLAN. The active worker was told to stop and preserve any partial scratch work; do not resume until the user asks.
+
+**User requested resumption:** private harness host/SDK checks are active again. No native binding, guest work, or Android change authorized in this slice.
+
+**Resume gate:** main reproduced host linked harness tests and disabled arm64 iOS link. Exact native ownership/readiness contract is under static review; no guest changes.
+
+**Binding decision and pivot:** the native self-test is not approved for execution. Public iOS auth browser callback ownership is an independent active prototype; the native harness stays disabled and no game/device is touched.
+
+**Browser ownership review:** initial host and iOS compile pass is not acceptance; main found a callback identity capture bug and a cancellation race. Fix/regressions are active before any standalone browser test.
+
+**Paused again at user's request:** browser worker told to stop and preserve scratch. Resume only on explicit user instruction; current state in PLAN.
+
+**Resumed again at user's request:** finish private callback-ownership fixes and their host/SDK gate; no guest assembly, browser, Cherry or game changes in this slice.
+
+**Browser validation work:** adapter ownership fixes passed worker host/SDK checks; main requested one additional cancellation edge correction. An independent standalone synthetic loopback callback fixture is in build-only preparation, not deployed.
+
+**Browser adapter follow-up:** main reproduced host and iOS SDK link after the off-main cancellation and reentrant-start fixes. The standalone loopback callback fixture is still build-only and not deployed.
+
+**Browser callback fixture:** build-only standalone source exists. Exact numeric loopback bind and accepted-endpoint checks are under hardening before any package/device action.
+
+**Standalone callback test:** main reviewed hardened bind and rebuilt/packaged the isolated own fixture; one `myphone` synthetic run is delegated, no result yet.
+
+**Callback input blocked:** fixture installed and reached Ready, but automation refused Start when foreground verification failed. No confirmed tap/result; guest later locked. Do not route around refused input.
+
+**Standalone callback result:** user tapped Start; main independently verified PASS UI and zero fixture crashes. Synthetic Apple-session callback with no plist scheme works in the guest; production HTTPS and game sign-in remain untested. Own adapter/test promotion is active.
+
+**Browser adapter promotion:** own source/fakes are in the working tree; main reran iOS core and full host gate. Stock game presentation owner is under static study; do not assume a scene-backed owner from the standalone fixture.
+
+**Stock UIKit owner:** static review finds a legacy app-owned key window/root and existing Apple authorization anchor, but runtime scene association is unknown. An SDK-only public UIKit observation dylib is in preparation; no game/UI/auth change.
+
+**Owner observation artifact:** main reproduced host/SDK gate of the dormant observer. A distinct private loader-only diagnostic package is in preparation; no guest or browser activity.
+
+**Owner observation test:** main verified exact loader-only package and delegated one bounded guest update/launch, no game interactions. No runtime result yet.
+
+**Owner observation outcome:** game launched unchanged to known notice; data preserved and no new crash. Installed own dylib bytes match prepared sections. Truncated logs leave actual window/scene values unconfirmed. Independent foreground auth-flow composition is now in private host-test work.
+
+**Auth flow review:** rendered foreground-event ownership alone is insufficient; require the same owner still foreground at claim/start. Private host tests compile but correction is active; no exchange integration.
+
+**Auth flow liveness gate:** main reproduced host/SDK checks after corrected current-owner checks. A single short recapture of the already installed observer is active; no reinstall, input or auth run.
+
+**Observer recapture blocked:** launch was refused; zero capture events are not a runtime observer result. Main confirmed no new crash and has requested refusal details only, with no further device action.
+
+**Observer retry series stopped:** final follow-up unlocked but never launched due to a preflight CLI parameter error. Window/scene state remains unverified; no more guest commands for this diagnostic series.
+
+**User resumed:** guest preflight found an existing game PID and left it alone. Own foreground-auth sequencing is being promoted with host/SDK checks only, no credentials, guest changes or game integration.
+
+**Foreground auth core promoted:** main reran full host/SDK gate. User-requested `myphone` restart passed; one idle-only observation of installed game build is active. No auth or game UI action.
+
+**Post-restart observer:** small PID consistent with prewarm was left alone. Capture expired before foreground verification/launch, so no scene result. Avoid repeating that automation; UIKit liveness integration remains independent.
+
+**UIKit liveness prototype:** private host/SDK tests passed main rerun. A shared tracked condition gatherer is being extracted so the browser and coordinator cannot drift. No legacy override or device action.
+
+**Shared owner gate:** reviewed tracked helper passes full host/SDK gate. Nil scene still rejects; the stock game's actual scene and presentation state remain unverified.
+
+**Owner diagnostics resumed 2026-11-20:** manual live capture was also truncated. Host-only work on a fixed temporary record is active after internet restoration; no guest writes, installs or changes in this slice.
+
+**Temporary record gate:** main reproduced host filesystem and arm64 SDK checks; private unsigned package preparation active. Guest temp-file write needs explicit user approval before install/run.
+
+**Owner record guest pass:** user-approved in-place probe preserved containers and showed the game at the known notice without a new crash. Fixed record independently confirmed visible key window, attached root and active scene. No legacy fallback needed for that observation. UIKit lifecycle binding is in private build-only preparation; no native auth, UI or transport behavior deployed.
+
+**UIKit lifecycle bridge review:** iOS compile reproduced; correction requested for terminal observer removal and nonblocking teardown. No runtime integration.
+
+**Lifecycle cleanup gate:** main reproduced corrected host and SDK tests. Own tracked bridge/test promotion is active; no game deployment or auth activity.
+
+**Lifecycle bridge added to working tree:** main reproduced full host and SDK gate. A parallelizable bounded game asset-routing boundary is in static review; no loader/package or guest changes planned in that slice.
+
+**Asset-route spike decision:** do not use the preserved setup for an unproven manifest fixture flow. Read-only disposable isolation options are under review; no machine/network changes approved.
+
+**Isolation review:** no disposable guest provisioned or approved, and same-guest app duplication is not a network boundary. Narrow manifest failure callback tracing is active before considering further runtime work.
+
+**Manifest failure mapping:** static 404/terminal failure selects the downloader failure callback, conditionally avoiding stage-zero parser/list work. Cookie/retry protection remains open and concrete flow activation is being traced separately.
+
+**Manifest first-spike decision:** LoginHome registration is static-confirmed but pre-action reachability is unknown. Remove it from first test choices. The native startup settings transfer is a new scoped static candidate, not an approved run.
+
+**First route pivot:** native settings request is also not a safe synthetic fixture. Private Apple-networking unified-notice client and exact response-seam review are active; no guest or Cherry traffic.
+
+**Notice client host gate:** main reproduced the private fake transport tests and iOS compile. Exact integration and cache effects remain under independent static review; no real request.
+
+**Notice response bridge:** one stock background call is a candidate, and HTTP 404 reaches the existing no-parser exception path. Private fixture-only facade and exact ABI review are active; no global hook, cache action, or game run.
+
+**Notice facade:** main reproduced private fake and SDK gates. It has no real LCError factory or deployed caller; exact ABI review remains active.
+
+**Notice ABI:** a single Objective-C unified-notice callsite and stock LCError/UA interfaces are static-confirmed. Private preconstructed-error and exact ARC wiring tasks are active; no runtime approval.
+
+**Notice error contract:** main reproduced offline and SDK gate for fake preconstructed error objects. Real callsite/ARC wiring is still in review; no game or device action.
+
+**Notice diagnostic build:** exact static `BL`/ARC continuation reviewed. Private ARC stub and in-memory branch writer are in actual implementation, not additional standalone behavior probes. No package or device action.
+
+**Notice writer:** main reproduced real-baseline in-memory race tests; stock file unchanged. Separate ARC stub remains in build prep, no package.
+
+**Notice integration preparation:** actual stub build reproduced; readiness correction and final raw-preserving package builder are active. No simulated-404 guest run or transport fallback.
+
+**Notice stub correction:** main reproduced typed-dispatch initialization regression and arm64 build. No error-type ivar guessed. Package builder still active; nothing deployed.
+
+**Quota renewal:** user authorized the stopped notice package worker to continue on the same model. Scope remains host-only package builder/tests; no deployment.
+
+**Notice diagnostic packaged:** main emitted the deterministic simulated-404 IPA pair after real-baseline dry-run/race tests. Mechanical signature-copy validation is active; no guest run or whole-process no-egress claim.
+
+**Notice diagnostic test:** mechanical validation passed; one bounded in-place guest update/launch is delegated. No taps or cache cleanup, no real routed request/TLS or whole-app network isolation claim.
+
+**Notice diagnostic first run:** updated with unchanged containers, launched PID3731; no fixed marker/new crash. Locked black screenshot is inconclusive. Existing-process screen inspection only is active, not another launch.
+
+**Notice scene observation:** tester saw avatar intro without closure notice on original PID after unlock. Main could not retrieve screenshot path before lock; no entry proof. Optional fixed temp-entry recording is in host-only prep, not deployed.
+
+**Notice durable result:** main reproduced opt-in record tests and iOS build. Entry-only fixed enum file needs separate guest-write permission before deployment.
+
+**Notice record approved:** user explicitly authorized updated diagnostic and one launch with the new fixed temp result. Final package verification active before tester deployment.
+
+**Notice recorder guest test:** main emitted verified deterministic pair under new root filenames; exact new RBN1 file preflight/update/read task is active with no game input.
+
+**Notice record result:** new file absent after one launch; intro without notice is not proof. Main verified installed own code/data match. Offline diagnosis active, no repeat guest work.
+
+**Notice V2 diagnostic:** a worker reports the one-write delayed summary is implemented and host/iOS checks passed. Main did not rerun that build before this handoff. No package, guest write, or new approval.
+
+**Outgoing handoff (2026-11-20):** user is switching sessions. PLAN's HANDOFF INITIATED block is the resume point. No device or repo change was made for the handoff itself. Reverify `myphone` and git before continuing. Do not infer diagnostic-entry success from the missing closure notice.
+
+**Handoff accepted & V2 diagnostic passed [V bounded, 2026-11-20]:** verified read-only git (`af20e8e`) and `myphone` state. Main review of the V2 recorder caught and fixed an iOS `tmp`-directory mode defect (`0077` → `0022`, preserving `0600` file creation); host tests and strict arm64 iOS 15 build passed (`RBNotice404Diagnostic.v2.dylib` SHA-256 `b9586e88bd63eaf0ff15db7fa75ad47c8144e7a44e7b5c1ae33f713207a22ecb`). With explicit user approval, main emitted deterministic pair `notice-record-v2-{a,b}.ipa` (SHA-256 `2be42ce97f833e29b3dfca177e820461ba11c6e6ecf6a9c9e8d3ce92bde2bdcd`), and tester performed one in-place update (`upgraded: true`, unchanged containers) and single launch (PID `4620`, no game taps). Main independently verified `tmp/raspberry-ios-notice-diagnostic-v2.dat` (31 B, `0600`): `RBN2` / `ready=1` / `entry=1` / `outcome=1`, with no new crash reports.
+
+**Real unified-notice request passed on `myphone` [V bounded, 2026-11-20]:** promoted `RBNoticeRouteClient` (with validated optional `User-Agent`), `RBNoticeRouteErrorAdapter`, and `+[RBEndpoint endpointFromFileURL:error:]` into tracked `ios/`; full macOS `scripts/gate.sh` passes. Built and main-reviewed private `work/ios-notice-real-package/` and `work/ios-notice-real-runtime/` (`RBNoticeReal.dylib` `c2ada046ff693482af2ecdcdf2a8a3c6f03c0f340a75945d4fa60bc32472f59a`, `RBNoticeReal.record.dylib` `6d7fed652e248dda46f0a86a35a2382c93904e64d3e4b9e8b8b60797ba6e7177`). With explicit user approval and a private operator `endpoint.json` outside Git, main emitted deterministic pair `notice-real-v1-{a,b}.ipa` (SHA-256 `a1cf3d73aade3cf693afbbb9a2b494bcac61cc67ab1aa7a535c1b8c1d2729d76`), and tester updated in place (`upgraded: true`, unchanged containers) and launched PID `4906` once (no game taps). Main independently inspected the 10s screenshot (avatar intro, no closure notice), verified `tmp/raspberry-ios-notice-real-v1.dat` (39 B, `0600`): `RBN3` / `ready=1` / `endpoint=1` / `entry=1` / `kind=1` (verified HTTPS 404 over platform TLS from the configured operator endpoint), and confirmed no new crash reports. Proves real unified-notice HTTPS routing only; cache migration, native game routing, Discord sign-in integration, and normal provisioning remain open.

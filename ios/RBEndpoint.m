@@ -1,11 +1,16 @@
 #import "RBEndpoint.h"
 
 #import <CoreFoundation/CoreFoundation.h>
+#import <errno.h>
+#import <fcntl.h>
 #import <string.h>
+#import <sys/stat.h>
+#import <unistd.h>
 
 NSString *const RBEndpointErrorDomain = @"org.raspberry.endpoint";
 
 static const NSUInteger RBEndpointMaxJSONBytes = 64u * 1024u;
+enum { RBEndpointMaxFileBytes = 4096u };
 
 @interface RBEndpoint () {
     rb_config _config;
@@ -219,6 +224,87 @@ static NSInteger RBPortIndex(NSString *key) {
         return nil;
     }
     return [[self alloc] initWithConfig:&config];
+}
+
++ (nullable instancetype)endpointFromFileURL:(nullable NSURL *)fileURL
+                                       error:(NSError * _Nullable * _Nullable)error {
+    if (error != NULL) {
+        *error = nil;
+    }
+    if (fileURL == nil || !fileURL.isFileURL || fileURL.path.length == 0) {
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorUnreadable, @"descriptor: file unreadable");
+        }
+        return nil;
+    }
+
+    const char *path = NULL;
+    @try {
+        path = fileURL.fileSystemRepresentation;
+    } @catch (NSException *exception) {
+        (void)exception;
+        path = NULL;
+    }
+    if (path == NULL || path[0] == '\0') {
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorUnreadable, @"descriptor: file unreadable");
+        }
+        return nil;
+    }
+
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) {
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorUnreadable, @"descriptor: file unreadable");
+        }
+        return nil;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorUnreadable, @"descriptor: file unreadable");
+        }
+        return nil;
+    }
+
+    uint8_t buffer[RBEndpointMaxFileBytes + 1u];
+    size_t total = 0;
+    while (total < sizeof(buffer)) {
+        ssize_t n = read(fd, buffer + total, sizeof(buffer) - total);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(fd);
+            if (error != NULL) {
+                *error = RBMakeError(RBEndpointErrorUnreadable, @"descriptor: file unreadable");
+            }
+            return nil;
+        }
+        if (n == 0) {
+            break;
+        }
+        total += (size_t)n;
+    }
+    close(fd);
+
+    if (total == 0) {
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorEmpty, @"descriptor: empty");
+        }
+        return nil;
+    }
+    if (total > RBEndpointMaxFileBytes) {
+        if (error != NULL) {
+            *error = RBMakeError(RBEndpointErrorTooLarge, @"descriptor: too large");
+        }
+        return nil;
+    }
+
+    NSData *data = [NSData dataWithBytes:buffer length:total];
+    return [self endpointWithJSONData:data error:error];
 }
 
 - (instancetype)initWithConfig:(const rb_config *)config {
