@@ -128,6 +128,17 @@ clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
 "$tmp/auth_uikit_lifecycle_status_gate_test" ||
     fail 'UIKit lifecycle status-gate tests failed'
 
+clang -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" \
+    "$root/ios/RBAuthCallbackSanitizer.m" \
+    "$root/ios/auth_callback_sanitizer_test.m" \
+    -framework Foundation \
+    -o "$tmp/auth_callback_sanitizer_test" ||
+    fail 'compile Foundation auth-callback sanitizer tests'
+
+"$tmp/auth_callback_sanitizer_test" ||
+    fail 'auth-callback sanitizer tests failed'
+
 clang -DRB_NOTICE_ROUTE_TESTING=1 -fblocks -fobjc-arc -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \
     "$root/ios/RBEndpoint.m" "$root/ios/RBURLRewrite.m" \
@@ -150,6 +161,20 @@ clang -fobjc-arc -Wall -Wextra -Werror \
 
 "$tmp/auth_store_test" ||
     fail 'auth-store tests failed'
+
+clang -fblocks -fobjc-arc -Wall -Wextra -Werror \
+    -I"$root/ios" -I"$root/native" \
+    "$root/ios/RBEndpoint.m" "$root/ios/RBAuthAttempt.m" \
+    "$root/ios/RBAuthBrowserSession.m" "$root/ios/RBAuthExchangeClient.m" \
+    "$root/ios/RBAuthStore.m" "$root/ios/RBAuthFlowCoordinator.m" \
+    "$root/ios/RBAuthGuestCredentialGate.m" \
+    "$root/ios/auth_guest_credential_gate_test.m" "$tmp/endpoint.o" \
+    -framework Foundation -framework Security -framework CoreFoundation \
+    -o "$tmp/auth_guest_credential_gate_test" ||
+    fail 'compile Foundation auth-guest-credential-gate tests'
+
+"$tmp/auth_guest_credential_gate_test" ||
+    fail 'auth-guest-credential-gate tests failed'
 
 clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/ios" -I"$root/native" \
@@ -178,9 +203,11 @@ if command -v xcrun >/dev/null 2>&1; then
 
         for source in RBEndpoint RBURLRewrite RBAuthAttempt RBAuthBrowserSession \
             RBAuthExchangeClient RBAuthFlowCoordinator RBAuthStore \
+            RBAuthGuestCredentialGate \
             RBNoticeRouteClient RBNoticeRouteErrorAdapter \
             RBAuthUIKitOwnerConditions RBASWebAuthenticationSessionDriver \
-            RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding; do
+            RBAuthUIKitLifecycleStatusGate RBAuthUIKitLifecycleBinding \
+            RBAuthCallbackSanitizer; do
             xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 \
                 -isysroot "$sdk" -fblocks -fobjc-arc \
                 -Wall -Wextra -Werror \
