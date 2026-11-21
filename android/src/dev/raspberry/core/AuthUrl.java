@@ -3,17 +3,8 @@ package dev.raspberry.core;
 public final class AuthUrl {
     private AuthUrl() {}
 
-    /** Loopback return. Null when the port is outside 1024..65535. */
-    public static String loopback(int port) {
-        if (port < 1024 || port > 65535) {
-            return null;
-        }
-        String s = "http://127.0.0.1:" + port + "/raspberry/cb";
-        if (s.length() > 64) {
-            return null;
-        }
-        return s;
-    }
+    /** Deep-link return (CONTRACT §3). The browser hands it to dev.raspberry.AuthReturn. */
+    public static final String RETURN = "raspberry://auth";
 
     public static String start(Descriptor d, String challenge, String ret, String state) {
         if (d == null || !challenge(challenge) || ret == null || !state(state)) {

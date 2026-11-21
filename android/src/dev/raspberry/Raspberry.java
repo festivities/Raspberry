@@ -41,11 +41,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
@@ -63,7 +58,8 @@ import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
 /**
- * classes5 entry points. The dex patch calls these directly. No manifest entries.
+ * classes5 entry points. The dex patch calls these directly. The manifest patch adds only
+ * AuthReturn, the raspberry://auth deep-link receiver.
  * JNI: Java_dev_raspberry_Raspberry_installNative (Ljava/lang/String;[I)Z
  * ports are mapped values in order 80, 443, 10000, 10123.
  */
@@ -72,8 +68,6 @@ public final class Raspberry {
     static final String PREF_MARKER = "raspberry.discord";
     private static final String PREF_ORIGIN = "raspberry.discord.origin";
     private static final int MAX_BODY = 16 * 1024;
-    private static final int MAX_HTTP = 4096;
-    private static final int MAX_ACCEPTS = 8;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private static volatile Context app;
@@ -90,7 +84,7 @@ public final class Raspberry {
     // Main thread only: the attempt that owns the dialog, its listener, and the UI flags.
     private static final Attempt attempt = new Attempt();
     private static final ReauthState reauth = new ReauthState();
-    private static ServerSocket socket;
+    private static Pkce proof;
     private static volatile int liveGen;
     private static long attemptResetEpoch;
     private static Activity attemptActivity;
@@ -639,7 +633,7 @@ public final class Raspberry {
         }
         if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
             if (attempt.pending(liveGen)) {
-                return "Return to the game to continue.";
+                return "Finishing sign-in.";
             }
             if (attempt.exchanging(liveGen)) {
                 return "Finishing sign-in.";
@@ -671,18 +665,12 @@ public final class Raspberry {
             return;
         }
         long resetEpoch = reauth.currentEpoch();
-        ServerSocket ss = null;
         int gen = 0;
         boolean armed = false;
         try {
-            ss = new ServerSocket();
-            ss.setReuseAddress(false);
-            ss.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), 0));
-            int port = ss.getLocalPort();
-            String ret = AuthUrl.loopback(port);
-            Pkce proof = Pkce.generate();
+            Pkce p = Pkce.generate();
             String state = Pkce.newState();
-            String url = ret == null ? null : AuthUrl.start(endpoint, proof.challenge, ret, state);
+            String url = AuthUrl.start(endpoint, p.challenge, AuthUrl.RETURN, state);
             if (url == null) {
                 failed = true;
                 setStatus("Sign-in failed. Tap Retry.");
@@ -694,15 +682,10 @@ public final class Raspberry {
                 setStatus("Sign-in failed. Tap Retry.");
                 return;
             }
-            ss.setSoTimeout(1000);
-            socket = ss;
+            proof = p;
             liveGen = gen;
             attemptResetEpoch = resetEpoch;
             attemptActivity = activity;
-            // The loop owns the PKCE proof for this generation; no other thread can reach it.
-            Thread thread = new Thread(acceptLoop(gen, ss, proof), "raspberry-cb");
-            thread.setDaemon(true);
-            thread.start();
             openBrowser(activity, Uri.parse(url));
             armed = true;
             failed = false;
@@ -714,15 +697,12 @@ public final class Raspberry {
             setStatus("Sign-in failed. Tap Retry.");
         } finally {
             if (!armed) {
-                close(ss);
-                if (socket == ss) {
-                    socket = null;
-                }
                 if (gen != 0) {
                     attempt.cancel(gen);
                 }
                 if (liveGen == gen) {
                     liveGen = 0;
+                    proof = null;
                     attemptActivity = null;
                     attemptResetEpoch = 0;
                 }
@@ -756,62 +736,27 @@ public final class Raspberry {
         activity.startActivity(new Intent(Intent.ACTION_VIEW, uri));
     }
 
-    private static Runnable acceptLoop(final int gen, final ServerSocket ss, final Pkce proof) {
-        return new Runnable() {
-            public void run() {
-                int accepts = 0;
-                try {
-                    while (attempt.live(gen, System.nanoTime())) {
-                        Socket client = null;
-                        try {
-                            client = ss.accept();
-                        } catch (SocketTimeoutException e) {
-                            continue;
-                        }
-                        long receivedAt = System.nanoTime();
-                        accepts++;
-                        if (accepts > MAX_ACCEPTS || client.getInetAddress() == null || !client.getInetAddress().isLoopbackAddress()) {
-                            close(client);
-                            if (accepts > MAX_ACCEPTS) {
-                                break;
-                            }
-                            continue;
-                        }
-                        Callback cb = readCallback(client, gen);
-                        int decision = attempt.onCallback(gen, cb, proof.verifier, receivedAt);
-                        if (decision == Attempt.EXCHANGE) {
-                            write(client, 200, "Sign-in received. Return to the game to continue.");
-                            close(client);
-                            MAIN.post(new Runnable() {
-                                public void run() {
-                                    maybeStartExchange(gen);
-                                }
-                            });
-                            return;
-                        }
-                        if (decision == Attempt.FAIL) {
-                            write(client, 400, "Sign-in failed.");
-                            close(client);
-                            logStep("callback");
-                            markFailed(gen);
-                            return;
-                        }
-                        write(client, cb == null ? 404 : 400, "Ignored.");
-                        close(client);
-                    }
-                    attempt.fail(gen);
-                    markFailed(gen);
-                } catch (Exception e) {
-                    if (attempt.live(gen, System.nanoTime())) {
-                        logFailure("callback-listener", e);
-                        attempt.fail(gen);
-                        markFailed(gen);
-                    }
-                } finally {
-                    close(ss);
-                }
-            }
-        };
+    /**
+     * Main thread, from AuthReturn. Stages a raspberry://auth return for the live attempt;
+     * anything else is ignored. The exchange still waits for the owner activity to resume.
+     */
+    static void onAuthReturn(Uri data) {
+        int gen = liveGen;
+        Pkce p = proof;
+        if (gen == 0 || p == null || data == null) {
+            return;
+        }
+        int decision = attempt.onCallback(gen, Callback.parseTarget(data.toString()), p.verifier, System.nanoTime());
+        if (decision == Attempt.IGNORE) {
+            return;
+        }
+        proof = null;
+        if (decision == Attempt.FAIL) {
+            logStep("callback");
+            markFailed(gen);
+            return;
+        }
+        maybeStartExchange(gen);
     }
 
     /** Claims the staged ticket only while its owning activity is lifecycle-resumed. */
@@ -846,7 +791,7 @@ public final class Raspberry {
         final Attempt.Exchange exchange = attempt.claimExchange(gen, now, foreground);
         if (exchange == null) {
             if (attempt.pending(gen)) {
-                setStatus("Return to the game to continue.");
+                setStatus("Finishing sign-in.");
                 bindButtons();
             }
             return;
@@ -1168,59 +1113,6 @@ public final class Raspberry {
         }
     }
 
-    private static Callback readCallback(Socket client, int gen) {
-        try {
-            client.setSoTimeout(5000);
-            InputStream in = client.getInputStream();
-            byte[] buf = new byte[MAX_HTTP];
-            int got = 0;
-            int lineEnd = -1;
-            while (got < buf.length && lineEnd < 0) {
-                if (!attempt.live(gen, System.nanoTime())) {
-                    return null;
-                }
-                int n = in.read(buf, got, buf.length - got);
-                if (n < 0) {
-                    break;
-                }
-                got += n;
-                lineEnd = findCrlf(buf, got);
-            }
-            if (lineEnd < 0) {
-                return null;
-            }
-            String line = new String(buf, 0, lineEnd, StandardCharsets.US_ASCII);
-            return Callback.parseLine(line);
-        } catch (Exception e) {
-            logFailure("callback-read", e);
-            return null;
-        }
-    }
-
-    private static int findCrlf(byte[] buf, int len) {
-        for (int i = 0; i + 1 < len; i++) {
-            if (buf[i] == '\r' && buf[i + 1] == '\n') {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private static void write(Socket client, int status, String text) {
-        try {
-            byte[] body = text.getBytes(StandardCharsets.US_ASCII);
-            String head = "HTTP/1.1 " + status + " \r\nContent-Length: " + body.length
-                    + "\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n";
-            OutputStream out = client.getOutputStream();
-            out.write(head.getBytes(StandardCharsets.US_ASCII));
-            out.write(body);
-            out.flush();
-        } catch (Exception e) {
-            // the browser can fail; the attempt decision already happened
-            logFailure("callback-response", e);
-        }
-    }
-
     private static void discard(InputStream in) {
         if (in == null) {
             return;
@@ -1258,8 +1150,7 @@ public final class Raspberry {
         if (gen != 0) {
             attempt.cancel(gen);
         }
-        close(socket);
-        socket = null;
+        proof = null;
         liveGen = 0;
         attemptActivity = null;
         attemptResetEpoch = 0;
@@ -1303,28 +1194,6 @@ public final class Raspberry {
             } catch (RuntimeException ignored) {
                 // the activity is already gone
             }
-        }
-    }
-
-    private static void close(Socket s) {
-        if (s == null) {
-            return;
-        }
-        try {
-            s.close();
-        } catch (Exception ignored) {
-            // ignore
-        }
-    }
-
-    private static void close(ServerSocket s) {
-        if (s == null) {
-            return;
-        }
-        try {
-            s.close();
-        } catch (Exception ignored) {
-            // ignore
         }
     }
 }

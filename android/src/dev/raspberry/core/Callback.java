@@ -1,7 +1,7 @@
 package dev.raspberry.core;
 
 /**
- * One loopback GET /raspberry/cb. Malformed input is null and must not finish an attempt.
+ * One raspberry://auth deep-link return. Malformed input is null and must not finish an attempt.
  * A parsed error is not a ticket.
  */
 public final class Callback {
@@ -18,27 +18,6 @@ public final class Callback {
         this.error = error;
     }
 
-    public static Callback parseLine(String line) {
-        if (line == null) {
-            return null;
-        }
-        if (line.endsWith("\r")) {
-            line = line.substring(0, line.length() - 1);
-        }
-        if (line.length() == 0 || line.length() > MAX_LINE || !line.startsWith("GET ")) {
-            return null;
-        }
-        int sp = line.indexOf(' ', 4);
-        if (sp < 0) {
-            return null;
-        }
-        String ver = line.substring(sp + 1);
-        if (!ver.equals("HTTP/1.1") && !ver.equals("HTTP/1.0")) {
-            return null;
-        }
-        return parseTarget(line.substring(4, sp));
-    }
-
     public static Callback parseTarget(String target) {
         if (target == null || target.length() == 0 || target.length() > MAX_LINE) {
             return null;
@@ -48,7 +27,7 @@ public final class Callback {
         }
         int q = target.indexOf('?');
         String path = q < 0 ? target : target.substring(0, q);
-        if (!path.equals("/raspberry/cb")) {
+        if (!path.equals(AuthUrl.RETURN)) {
             return null;
         }
         if (q < 0 || q == target.length() - 1) {

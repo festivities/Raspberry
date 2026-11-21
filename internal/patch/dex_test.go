@@ -12,13 +12,14 @@ import (
 
 func TestAPKPlan(t *testing.T) {
 	plan := APKPlan()
-	if len(plan) != 7 {
+	if len(plan) != 8 {
 		t.Fatalf("len %d", len(plan))
 	}
 	wantReplace := map[string]string{
 		"lib/arm64-v8a/libgame.so":   LibgameArm64SHA,
 		"lib/armeabi-v7a/libgame.so": LibgameArmv7SHA,
 		"classes3.dex":               Classes3SHA,
+		"AndroidManifest.xml":        ManifestSHA,
 	}
 	wantAdd := map[string]bool{
 		"classes5.dex":                    true,

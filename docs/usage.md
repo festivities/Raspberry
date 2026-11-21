@@ -29,7 +29,7 @@ The signed file name is fixed: `raspberry-lineplay-10.1.0.0.apk`. An existing fi
 
 Installing a build for a different HTTPS origin requires fresh Discord SSO; it does not reuse the previous operator's saved authorization. A fresh SSO clears the old game-session cookie, not accounts or downloaded assets. Losing/changing the APK signing key still requires uninstalling the old app before Android will accept the replacement.
 
-After Discord returns “Sign-in received,” close the browser tab or return to the game promptly. The game finishes sign-in once it is foregrounded; tickets last at most two minutes. If the ticket expires, use Retry for a new sign-in. The pending ticket is not saved across app/process exit.
+After Discord sign-in the browser opens `raspberry://auth`, which returns to LINE PLAY by itself (if the browser asks, allow opening LINE PLAY). The game finishes sign-in in the foreground; tickets last at most two minutes. If the ticket expires, use Retry for a new sign-in. The pending ticket is not saved across app/process exit.
 
 Once the game is ready, the normal no-session path automatically uses the Discord-authorized guest transport instead of asking you to Register, Start as Guest or Log In again. An existing game-session cookie keeps the stock returning-player path. Separate consent prompts are not bypassed.
 

@@ -349,6 +349,11 @@ func buildAPK(ctx context.Context, req buildRequest, stdout io.Writer) error {
 		return err
 	}
 	classes3, err := read("classes3.dex")
+	if err != nil {
+		zr.Close()
+		return err
+	}
+	manifest, err := read("AndroidManifest.xml")
 	zr.Close()
 	if err != nil {
 		return err
@@ -358,6 +363,10 @@ func buildAPK(ctx context.Context, req buildRequest, stdout io.Writer) error {
 		return err
 	}
 	new32, err := patch.Apply(lib32, armv7)
+	if err != nil {
+		return err
+	}
+	newManifest, err := patch.AddAuthReturn(manifest)
 	if err != nil {
 		return err
 	}
@@ -399,6 +408,7 @@ func buildAPK(ctx context.Context, req buildRequest, stdout io.Writer) error {
 		"lib/arm64-v8a/libgame.so":   new64,
 		"lib/armeabi-v7a/libgame.so": new32,
 		"classes3.dex":               classes3New,
+		"AndroidManifest.xml":        newManifest,
 	}
 	unsigned := filepath.Join(scratch, "unsigned.apk")
 	if err := apk.Repack(req.apk, unsigned, apk.Options{

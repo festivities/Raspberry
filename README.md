@@ -65,7 +65,7 @@ Keep your keystore backed up—losing it means uninstalling the app before insta
 
 ### Signing in on Android
 1. Launch LINE PLAY and tap **Discord** on the sign-in prompt.
-2. Complete Discord sign-in in the browser tab. When you see **"Sign-in received. Return to the game to continue."**, close the tab or switch back to LINE PLAY within two minutes so the app finishes exchanging the ticket in the foreground.
+2. Complete Discord sign-in in the browser tab. The browser hands sign-in back to LINE PLAY and the game comes back to the front on its own. If your browser asks whether to open LINE PLAY, allow it.
 3. The game automatically enters your account (or avatar creation for new accounts) without showing the legacy LINE login screen.
 
 ## Quick start — iOS (macOS)

@@ -2,6 +2,12 @@
 
 Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab facts and client facts: [AGENTS.md](AGENTS.md). The interface with Cherry servers: [CONTRACT.md](CONTRACT.md). Dated evidence and old pairs: [HISTORY.md](HISTORY.md). Implementation is in progress; the status table and current handoff supersede the original proposal.
 
+## Current slice — 2026-11-21 (Android deep-link return)
+
+**Android deep-link return [V host/package + bounded device, 2026-11-21]:** answers Cherry CONTRACT §10 2026-11-21 ~22:40 (loopback `ERR_CONNECTION_TIMED_OUT` when battery/standby rules firewall the backgrounded game). Android now sends `return=raspberry://auth`; the loopback listener is removed. Manifest edit (`internal/patch/manifest.go`, locked stock SHA `e8b420e5…`) appends exported `dev.raspberry.AuthReturn` (`Theme.NoDisplay`, VIEW+DEFAULT+BROWSABLE, `raspberry://auth`); the trampoline hands the URI to the live attempt (`Raspberry.onAuthReturn`, state + in-memory PKCE) and reopens the launcher intent with `CLEAR_TOP|SINGLE_TOP`, so the Custom Tab closes and the game returns by itself (also fixes players' confusion over "Sign-in received. Return to the game"). The URI never reaches `LinePlay` (its `readIntentData` logs intent data remotely). Gates pass (gate, uncached race, Android host tests, dex/dexpatch/native builds, diff check). Same-signer in-place update on `emulator-5559`: data kept, Garden shown, `raspberry://auth` resolves to `AuthReturn`, two synthetic error returns kept one `LinePlay`/same PID, crash buffer empty (main checked the screenshot). User-verified 2026-11-21 on the emulator: a real Discord sign-in returns to the game by itself. A Battery Saver run and physical phones are not yet verified. Private evidence: `%TEMP%\opencode\raspberry\authreturn-20261121\`. Not committed.
+
+Next: the user (or a tester with the user present) runs Logout → Discord sign-in on Android and confirms the browser returns to the game without the "Return to the game" page; optionally repeat with Battery Saver on (`cmd power set-mode 1`, unplugged), as Cherry suggests.
+
 ## HANDOFF INITIATED — 2026-11-21 (Android & iOS v1 production-ready delivery)
 
 **Resume here.** Receiving agent with zero context: read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `README.md`, `docs/{usage,build,patches,security,ios}.md`, and Cherry's `.agents/CONTRACT.md` (read-only). Append **HANDOFF ACCEPTED** after checking `git log -1`, `git status`, and current resources. This block supersedes all older handoffs below.

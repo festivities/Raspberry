@@ -63,29 +63,28 @@ public final class CoreTest {
     private static void callback() {
         String ticket = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         String state = "abcdefghij123456";
-        Callback ok = Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + state + " HTTP/1.1");
+        Callback ok = Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state);
         check(ok != null && ticket.equals(ok.ticket) && state.equals(ok.state) && ok.error == null, "cb-ok");
-        check(Callback.parseLine("GET /raspberry/cb?state=" + state + "&ticket=" + ticket + " HTTP/1.0") != null, "cb-order");
-        check(Callback.parseLine("POST /raspberry/cb?ticket=" + ticket + "&state=" + state + " HTTP/1.1") == null, "cb-post");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + state + "&ticket=" + ticket + " HTTP/1.1") == null, "cb-dup");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + state + "&state=" + state + " HTTP/1.1") == null, "cb-dup-state");
-        check(Callback.parseLine("GET /raspberry/cb?state=" + state + " HTTP/1.1") == null, "cb-missing-ticket");
-        check(Callback.parseLine("GET /favicon.ico HTTP/1.1") == null, "cb-path");
-        check(Callback.parseLine("GET /raspberry/cb/extra?ticket=" + ticket + "&state=" + state + " HTTP/1.1") == null, "cb-path-extra");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + state + "&error=x HTTP/1.1") == null, "cb-both");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + state + "&x=1 HTTP/1.1") == null, "cb-extra");
-        String big = "GET /raspberry/cb?ticket=" + ticket + "&state=" + state + "&error=" + repeat('a', 65) + " HTTP/1.1";
-        check(Callback.parseLine(big) == null, "cb-oversize-error");
-        Callback err = Callback.parseLine("GET /raspberry/cb?error=access_denied&state=" + pct(state) + " HTTP/1.1");
+        check(Callback.parseTarget("raspberry://auth?state=" + state + "&ticket=" + ticket) != null, "cb-order");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state + "&ticket=" + ticket) == null, "cb-dup");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state + "&state=" + state) == null, "cb-dup-state");
+        check(Callback.parseTarget("raspberry://auth?state=" + state) == null, "cb-missing-ticket");
+        check(Callback.parseTarget("raspberry://other?state=abcdefghij123456") == null, "cb-path");
+        check(Callback.parseTarget("raspberry://auth/extra?ticket=" + ticket + "&state=" + state) == null, "cb-path-extra");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state + "&error=x") == null, "cb-both");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state + "&x=1") == null, "cb-extra");
+        String big = "raspberry://auth?ticket=" + ticket + "&state=" + state + "&error=" + repeat('a', 65);
+        check(Callback.parseTarget(big) == null, "cb-oversize-error");
+        Callback err = Callback.parseTarget("raspberry://auth?error=access_denied&state=" + pct(state));
         check(err != null && err.ticket == null && "access_denied".equals(err.error) && state.equals(err.state), "cb-error-encoded");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=%2 HTTP/1.1") == null, "cb-bad-pct");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=%00aaaa HTTP/1.1") == null, "cb-nul");
-        check(Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + state + "#x") == null, "cb-fragment");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=%2") == null, "cb-bad-pct");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=%00aaaa") == null, "cb-nul");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state + "#x") == null, "cb-fragment");
         String q = "ticket=" + ticket + "&state=" + state;
-        check(Callback.parseLine("GET /raspberry/cb?" + q + "&" + q + " HTTP/1.1") == null, "cb-replay-query");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + repeat('A', 44) + "&state=" + state + " HTTP/1.1") == null, "cb-ticket-long");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + repeat('a', 15) + " HTTP/1.1") == null, "cb-state-short");
-        check(Callback.parseLine("GET /raspberry/cb?ticket=" + ticket + "&state=" + repeat('a', 65) + " HTTP/1.1") == null, "cb-state-long");
+        check(Callback.parseTarget("raspberry://auth?" + q + "&" + q) == null, "cb-replay-query");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + repeat('A', 44) + "&state=" + state) == null, "cb-ticket-long");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + repeat('a', 15)) == null, "cb-state-short");
+        check(Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + repeat('a', 65)) == null, "cb-state-long");
     }
 
     private static void attempt() {
@@ -99,7 +98,7 @@ public final class CoreTest {
         check(new Attempt().begin(repeat('a', 65), t0) == 0, "begin-overlong");
         check(new Attempt().begin(repeat('a', 15), t0) == 0, "begin-short");
         check(a.begin(other, t0) == 0, "one-live");
-        Callback wrong = Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other);
+        Callback wrong = Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + other);
         check(onCallback(a, gen, wrong, t0) == Attempt.IGNORE, "wrong-state");
         check(a.live(gen, t0), "still-live");
         check(onCallback(a, gen + 1, callback(ticket, state), t0) == Attempt.IGNORE, "other-gen");
@@ -116,12 +115,12 @@ public final class CoreTest {
         exchange.clear();
         check(onCallback(a, gen2, callback(ticket, state), t0) == Attempt.IGNORE, "replay-done");
         int gen3 = a.begin(state, t0);
-        Callback denied = Callback.parseTarget("/raspberry/cb?error=access_denied&state=" + state);
+        Callback denied = Callback.parseTarget("raspberry://auth?error=access_denied&state=" + state);
         check(onCallback(a, gen3, denied, t0) == Attempt.FAIL, "error-fails");
         check(onCallback(a, gen3, callback(ticket, state), t0) == Attempt.IGNORE, "no-auto-exchange");
         int gen4 = a.begin(other, t0);
         a.cancel(gen4);
-        check(onCallback(a, gen4, Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + other), t0) == Attempt.IGNORE, "cancel-ignores");
+        check(onCallback(a, gen4, Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + other), t0) == Attempt.IGNORE, "cancel-ignores");
         check(a.begin(state, t0) != 0, "retry-after-cancel");
     }
 
@@ -328,16 +327,17 @@ public final class CoreTest {
         check(WebRewrite.rewrite(raw, null) == raw, "null-endpoint");
         Descriptor mapped = Descriptor.parse("{\"v\":1,\"host\":\"10.0.2.2\",\"ports\":{\"443\":8443}}");
         check(WebRewrite.rewrite("http://help2.line.me/a", mapped).equals("https://10.0.2.2:8443/a"), "mapped-port");
-        String start = AuthUrl.start(d, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "http://127.0.0.1:12345/raspberry/cb", "abcdefghij123456");
+        String start = AuthUrl.start(d, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", AuthUrl.RETURN, "abcdefghij123456");
         check(start != null && start.startsWith("https://ep.example/auth/v1/discord/start?"), "start-host");
         check(start.indexOf(":443") < 0, "omit-443");
         check(start.indexOf("verifier") < 0, "no-verifier");
-        check(start.indexOf("return=http%3A%2F%2F127.0.0.1%3A12345%2Fraspberry%2Fcb") > 0, "return-encoded");
-        check(AuthUrl.loopback(1023) == null && AuthUrl.loopback(1024) != null, "port-floor");
-        check(AuthUrl.loopback(65535).length() <= 64, "return-cap");
+        check(start.indexOf("return=raspberry%3A%2F%2Fauth") > 0, "return-encoded");
+        check(AuthUrl.RETURN.length() <= 64, "return-cap");
+        check(Callback.parseTarget("RASPBERRY://auth?ticket=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&state=abcdefghij123456") == null, "cb-scheme-exact");
+        check(Callback.parseTarget("raspberry://auth/?ticket=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&state=abcdefghij123456") == null, "cb-path-exact");
         check(AuthUrl.exchange(mapped).equals("https://10.0.2.2:8443/auth/v1/exchange"), "exchange-url");
         String challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-        String ret = "http://127.0.0.1:12345/raspberry/cb";
+        String ret = AuthUrl.RETURN;
         check(AuthUrl.start(d, challenge + "A", ret, "abcdefghij123456") == null, "start-challenge-long");
         check(AuthUrl.start(d, challenge.substring(1), ret, "abcdefghij123456") == null, "start-challenge-short");
         check(AuthUrl.start(d, challenge, ret, repeat('a', 15)) == null, "start-state-short");
@@ -819,7 +819,7 @@ public final class CoreTest {
     }
 
     private static Callback callback(String ticket, String state) {
-        return Callback.parseTarget("/raspberry/cb?ticket=" + ticket + "&state=" + state);
+        return Callback.parseTarget("raspberry://auth?ticket=" + ticket + "&state=" + state);
     }
 
     private static int onCallback(Attempt attempt, int gen, Callback callback, long now) {

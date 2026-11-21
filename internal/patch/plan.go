@@ -18,14 +18,15 @@ type APKEntry struct {
 	InputSHA256 string
 }
 
-// APKPlan is the v1 entry map: both libgame builds, classes3, plus our dex,
-// both hook libraries and the endpoint asset. Other zip entries stay byte
-// identical. The APK writer does not apply this yet.
+// APKPlan is the v1 entry map: both libgame builds, classes3, the manifest,
+// plus our dex, both hook libraries and the endpoint asset. Other zip entries
+// stay byte identical. The APK writer does not apply this yet.
 func APKPlan() []APKEntry {
 	return []APKEntry{
 		{Name: "lib/arm64-v8a/libgame.so", Kind: Replace, InputSHA256: LibgameArm64SHA},
 		{Name: "lib/armeabi-v7a/libgame.so", Kind: Replace, InputSHA256: LibgameArmv7SHA},
 		{Name: "classes3.dex", Kind: Replace, InputSHA256: Classes3SHA},
+		{Name: "AndroidManifest.xml", Kind: Replace, InputSHA256: ManifestSHA},
 		{Name: "classes5.dex", Kind: Add},
 		{Name: "lib/arm64-v8a/libraspberry.so", Kind: Add},
 		{Name: "lib/armeabi-v7a/libraspberry.so", Kind: Add},
