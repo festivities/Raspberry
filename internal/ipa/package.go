@@ -40,7 +40,7 @@ const (
 var (
 	packageFixedTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// RequiredExports lists all six symbols the runtime dylib must export directly from RX __TEXT.
+	// RequiredExports lists all ten symbols the runtime dylib must export directly from RX __TEXT.
 	RequiredExports = []string{
 		ExportNotice404DiagnosticEntry,
 		ExportGetaddrinfo,
@@ -48,6 +48,10 @@ var (
 		ExportGethostbyname,
 		ExportConnect,
 		ExportGuestUniqueCode,
+		ExportLoginReady,
+		ExportSessionReset,
+		ExportCheckSessionError,
+		ExportGuestGenerateError,
 	}
 )
 
@@ -620,11 +624,30 @@ func validateMainWriteWindows(original, patched []byte) error {
 		{0x3480, 0x3480 + len(ExportConnect) + 1},
 		{0x3500, 0x3548},
 		{0x3580, 0x3580 + len(ExportGuestUniqueCode) + 1},
+		{0x3600, 0x360c},
+		{0x3640, 0x3640 + loginReadyResolverWordCount*4},
+		{0x3680, 0x3680 + len(ExportLoginReady) + 1},
+		{int(gdprLoginReadyResolverRVA), int(gdprLoginReadyResolverRVA + gdprLoginReadyResolverWordCount*4)},
+		{0x3700, 0x3700 + sessionResetResolverWordCount*4},
+		{0x3780, 0x3780 + len(ExportSessionReset) + 1},
+		{0x3800, 0x3800 + sessionResetResolverWordCount*4},
+		{0x38c0, 0x38c0 + sessionResetResolverWordCount*4},
+		{0x3980, 0x3980 + checkSessionResolverWordCount*4},
+		{0x3a00, 0x3a00 + len(ExportCheckSessionError) + 1},
+		{0x3a40, 0x3a40 + guestGenerateResolverWordCount*4},
+		{0x3b00, 0x3b00 + len(ExportGuestGenerateError) + 1},
 		{0x12d8be4, 0x12d8be8},
 		{0x53af68, 0x53af6c},
+		{0x538de4, 0x538de8},
 		{0x53bc98, 0x53bc9c},
 		{0xbfe3b8, 0xbfe3bc},
 		{0xd1ba00, 0xd1ba04},
+		{0x6af020, 0x6af024},
+		{0x6b39bc, 0x6b39c0},
+		{0xbdf494, 0xbdf498},
+		{0x6ae0c8, 0x6ae0cc},
+		{0x6b2a54, 0x6b2a58},
+		{int(gdprLoginReadyCallsiteRVA), int(gdprLoginReadyCallsiteRVA + 4)},
 		{0x1ac149c, 0x1ac14a0},
 		{0x1ac1874, 0x1ac1878},
 		{0x1ac1904, 0x1ac1908},
@@ -658,6 +681,8 @@ func validateMainWriteWindows(original, patched []byte) error {
 		start int
 		end   int
 	}{
+		{name: "legacy login helper prologue", start: 0x538db8, end: 0x538de4},
+		{name: "legacy login helper continuation", start: 0x538de8, end: 0x538df8},
 		{name: "stock ARC return/retain continuation", start: 0x12d8be8, end: 0x12d8bf4},
 		{name: "SetEndLoading entry prologue", start: 0x53ad08, end: 0x53ad28},
 		{name: "avcookie.na check", start: 0x53ade0, end: 0x53adf0},
@@ -665,6 +690,17 @@ func validateMainWriteWindows(original, patched []byte) error {
 		{name: "US COPPA check", start: 0x53aee0, end: 0x53aef8},
 		{name: "SetEndLoading eligible tail prefix", start: 0x53af48, end: 0x53af68},
 		{name: "SetEndLoading post-tail boundary", start: 0x53af6c, end: 0x53af70},
+		{name: "Logout sessionout success prefix", start: 0x6aeff8, end: 0x6af020},
+		{name: "Logout sessionout success suffix", start: 0x6af024, end: 0x6af02c},
+		{name: "SNS Delete Avatar success prefix", start: 0xbdf478, end: 0xbdf494},
+		{name: "SNS Delete Avatar success suffix", start: 0xbdf498, end: 0xbdf4a4},
+		{name: "direct Delete Avatar success prefix", start: 0x6b398c, end: 0x6b39bc},
+		{name: "direct Delete Avatar success suffix", start: 0x6b39c0, end: 0x6b39c8},
+		{name: "checkSession error entry continuation", start: 0x6ae0cc, end: 0x6ae0f4},
+		{name: "guest/generate handler prefix", start: 0x6b29e0, end: 0x6b2a54},
+		{name: "guest/generate handler epilogue tail", start: 0x6b2a58, end: 0x6b2a60},
+		{name: "case 10043 GDPR-ready branch prefix", start: 0x53c430, end: int(gdprLoginReadyCallsiteRVA)},
+		{name: "case 10043 GDPR-ready branch continuation", start: int(gdprLoginReadyCallsiteRVA + 4), end: 0x53c440},
 		{name: "guest generate prologue", start: 0x6bdd4c, end: 0x6bdd68},
 		{name: "guest callsite1 prefix", start: 0x53bc8c, end: 0x53bc98},
 		{name: "guest callsite1 suffix", start: 0x53bc9c, end: 0x53bca0},

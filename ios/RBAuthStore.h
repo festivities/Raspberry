@@ -43,6 +43,9 @@ typedef NS_ENUM(NSInteger, RBAuthStoreErrorCode) {
 /// without touching avcookie.na or any other file.
 - (BOOL)clearAuthorizationError:(NSError * _Nullable * _Nullable)error;
 
+/// Removes only <cachesDirectory>/avcookie.na (refusing symlinks; ENOENT succeeds).
+- (BOOL)clearCachedCookieError:(NSError * _Nullable * _Nullable)error;
+
 @end
 
 NS_ASSUME_NONNULL_END

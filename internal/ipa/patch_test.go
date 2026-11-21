@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,7 +21,11 @@ func TestExportConstants(t *testing.T) {
 		ExportFreeaddrinfo != "rb_ios_freeaddrinfo" ||
 		ExportGethostbyname != "rb_ios_gethostbyname" ||
 		ExportConnect != "rb_ios_connect" ||
-		ExportGuestUniqueCode != "rb_ios_guest_unique_code" {
+		ExportGuestUniqueCode != "rb_ios_guest_unique_code" ||
+		ExportLoginReady != "rb_ios_on_login_ready" ||
+		ExportSessionReset != "rb_ios_on_session_reset" ||
+		ExportCheckSessionError != "rb_ios_on_check_session_error" ||
+		ExportGuestGenerateError != "rb_ios_on_guest_generate_error" {
 		t.Fatal("unexpected exported symbol constant value")
 	}
 }
@@ -124,13 +129,13 @@ func TestAutoGuestEntryBranchEncodingAndDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if patchedWord != 0x141b0d08 {
-		t.Fatalf("patched word = 0x%08x, want 0x141b0d08", patchedWord)
+	if patchedWord != autoGuestEntryPatchedWord {
+		t.Fatalf("patched word = 0x%08x, want 0x%08x", patchedWord, autoGuestEntryPatchedWord)
 	}
 	patchedTarget, patchedLink, ok := decodeArm64Branch(patchedWord, autoGuestEntryRVA)
-	if !ok || patchedLink || patchedTarget != createGuestAccountRVA {
+	if !ok || patchedLink || patchedTarget != loginReadyResolverRVA {
 		t.Fatalf("decoded patched = (0x%x, link=%t, ok=%t), want (0x%x, link=false, ok=true)",
-			patchedTarget, patchedLink, ok, createGuestAccountRVA)
+			patchedTarget, patchedLink, ok, loginReadyResolverRVA)
 	}
 }
 
@@ -255,6 +260,458 @@ func TestResolverEncodingsAndABIShape(t *testing.T) {
 	})
 }
 
+func TestCheckSessionErrorResolverLoadsSavedX3(t *testing.T) {
+	out, err := emitAllPatches(syntheticPreparedImage())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The resolver saves X3 in the second slot of STP X2,X3,[SP,#16].
+	if got := binary.LittleEndian.Uint32(out[checkSessionResolverRVA+2*4:]); got != 0xa9010fe2 {
+		t.Fatalf("checkSession resolver save instruction = 0x%08x, want STP X2,X3,[SP,#16]", got)
+	}
+	// Decode the actual emitted argument-load instruction, independently of the
+	// resolver-word generator/comparison, so a caller-saved X3 cannot regress.
+	got := binary.LittleEndian.Uint32(out[checkSessionResolverRVA+12*4:])
+	rt, rn, offset, ok := decodeArm64LDR64Unsigned(got)
+	if !ok || rt != 0 || rn != 31 || offset != 24 {
+		t.Fatalf("checkSession callback argument instruction 0x%08x decodes (rt=%d rn=%d offset=%d ok=%t), want LDR X0,[SP,#24]",
+			got, rt, rn, offset, ok)
+	}
+	if got == 0xaa0303e0 {
+		t.Fatal("checkSession resolver passes caller-saved X3 directly after dlsym")
+	}
+}
+
+type lrResolverCase struct {
+	name            string
+	base            uint64
+	wordCount       int
+	restoreStart    int
+	stackAddIndex   int
+	tailBranchIndex int
+	tailTarget      uint64
+}
+
+func TestReauthResolversPreserveLRAcrossCallbacks(t *testing.T) {
+	out, err := emitAllPatches(syntheticPreparedImage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvers := []lrResolverCase{
+		{"Logout reset", sessionOutResolverRVA, sessionResetResolverWordCount, 14, 19, 20, 0x89ad04},
+		{"direct delete reset", deleteDirectResolverRVA, sessionResetResolverWordCount, 14, 19, 20, 0x89ad04},
+		{"SNS delete reset", deleteSNSResolverRVA, sessionResetResolverWordCount, 14, 19, 20, 0x89b23c},
+		{"checkSession error", checkSessionResolverRVA, checkSessionResolverWordCount, 14, 19, 21, checkSessionErrorEntryRVA + 4},
+		{"guest refusal", guestGenerateResolverRVA, guestGenerateResolverWordCount, 15, 20, 23, guestGenerateDialogTailRVA},
+	}
+
+	for _, resolver := range resolvers {
+		t.Run(resolver.name, func(t *testing.T) {
+			if err := assertLRPairSemantics(out, resolver); err != nil {
+				t.Fatal(err)
+			}
+			if err := runEmittedResolverModel(out, resolver); err != nil {
+				t.Fatalf("emitted resolver model failed: %v", err)
+			}
+
+			// Recreate the old bad X8,XZR encodings in this emitted resolver.
+			// The field assertions and bounded model must both reject them.
+			oldPair := append([]byte(nil), out...)
+			putResolverWord(oldPair, resolver, 5, 0xa9047fe8)
+			putResolverWord(oldPair, resolver, resolver.restoreStart+4, 0xa9447fe8)
+			if err := assertLRPairSemantics(oldPair, resolver); err == nil {
+				t.Fatal("accepted old pair encodings with Rt2=XZR")
+			}
+			if err := runEmittedResolverModel(oldPair, resolver); err == nil {
+				t.Fatal("old pair encodings did not expose the corrupted incoming LR")
+			}
+		})
+	}
+}
+
+func TestLogoutOldLRPairCanPlausiblyReplayCleanupWithNullX0(t *testing.T) {
+	out, err := emitAllPatches(syntheticPreparedImage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout := lrResolverCase{
+		name: "Logout reset", base: sessionOutResolverRVA, wordCount: sessionResetResolverWordCount,
+		restoreStart: 14, stackAddIndex: 19, tailBranchIndex: 20, tailTarget: 0x89ad04,
+	}
+	fixed, err := simulateLogoutCleanupReturn(out, logout)
+	if err != nil {
+		t.Fatalf("fixed emitted resolver model failed: %v", err)
+	}
+	if fixed.cleanupCalls != 1 || fixed.firstStockX0 == 0 || fixed.firstStockSP != fixed.callerSP ||
+		fixed.firstReturnPC != fixed.originalLR {
+		t.Fatalf("fixed pair did not produce one normal cleanup return: %+v", fixed)
+	}
+
+	// A synthetic caller frame with a zero first word is only a plausible
+	// reproduction of the hypothesized stack shape, not evidence of production
+	// Logout's first-pass SP contents.
+	oldPair := append([]byte(nil), out...)
+	putResolverWord(oldPair, logout, 5, 0xa9047fe8)
+	putResolverWord(oldPair, logout, logout.restoreStart+4, 0xa9447fe8)
+	replayed, err := simulateLogoutCleanupReturn(oldPair, logout)
+	if err != nil {
+		t.Fatalf("old-pair replay model failed: %v", err)
+	}
+	if replayed.cleanupCalls != 2 ||
+		replayed.firstStockX0 == 0 || replayed.firstStockSP != replayed.callerSP ||
+		replayed.firstReturnPC != logout.base+14*4 ||
+		!replayed.reentryWasLDPX0X1 || replayed.reentryX0 != 0 ||
+		replayed.secondStockSP != replayed.callerSP+80 ||
+		replayed.secondStockX0 != 0 || replayed.secondStockTarget != logout.tailTarget {
+		t.Fatalf("old pair did not exhibit bounded null-x0 replay path: %+v", replayed)
+	}
+}
+
+type logoutReplayResult struct {
+	callerSP, originalLR uint64
+	cleanupCalls         int
+	firstStockX0         uint64
+	firstStockSP         uint64
+	firstReturnPC        uint64
+	reentryWasLDPX0X1    bool
+	reentryX0            uint64
+	secondStockSP        uint64
+	secondStockX0        uint64
+	secondStockTarget    uint64
+}
+
+// simulateLogoutCleanupReturn consumes the emitted resolver bytes, models one
+// stock cleanup return, and follows a possible return into the resolver's
+// restore tail using a synthetic caller frame. The modeled frame is not a
+// claim about the real callback's first-pass stack contents.
+func simulateLogoutCleanupReturn(data []byte, resolver lrResolverCase) (logoutReplayResult, error) {
+	const (
+		callerSP   = uint64(0x200000)
+		originalLR = uint64(0xabcdef0000001234)
+		initialX0  = uint64(0x123456789abcdef0)
+	)
+	result := logoutReplayResult{callerSP: callerSP, originalLR: originalLR}
+	stack := map[uint64]uint64{
+		callerSP:      0, // the hypothesized caller-frame word used on re-entry
+		callerSP + 8:  0x8888,
+		callerSP + 16: 0x1616,
+		callerSP + 24: 0x2424,
+		callerSP + 32: 0x3232,
+		callerSP + 40: 0x4040,
+		callerSP + 48: 0x4848,
+		callerSP + 56: 0x5656,
+		callerSP + 64: 0x6464,
+		callerSP + 72: 0x7272,
+	}
+	regs := [31]uint64{}
+	for i := range regs {
+		regs[i] = 0x1000000000000000 + uint64(i)*0x100
+	}
+	regs[0], regs[30] = initialX0, originalLR
+	sp := callerSP
+	word := func(index int) uint32 { return resolverWord(data, resolver, index) }
+
+	frameBytes, ok := decodeSubSPImmediateForTest(word(0))
+	if !ok || frameBytes != 80 {
+		return result, fmt.Errorf("Logout resolver frame allocation=%d ok=%t", frameBytes, ok)
+	}
+	sp -= frameBytes
+	for idx := 1; idx <= 5; idx++ {
+		fields, ok := decodePair64OffsetForTest(word(idx))
+		if !ok || fields.load || fields.rn != 31 || fields.offset < 0 {
+			return result, fmt.Errorf("Logout save word[%d] is not STP on SP: %+v", idx, fields)
+		}
+		address := sp + uint64(fields.offset)
+		stack[address] = pairRegisterValue(regs, fields.rt)
+		stack[address+8] = pairRegisterValue(regs, fields.rt2)
+	}
+
+	dlsymPC := resolver.base + 8*4
+	if target, link, ok := decodeArm64Branch(word(8), dlsymPC); !ok || !link || target != patchDlsymStubRVA {
+		return result, fmt.Errorf("Logout dlsym target=0x%x link=%t ok=%t", target, link, ok)
+	}
+	for i := 0; i <= 18; i++ {
+		regs[i] = 0xd15a000000000000 + uint64(i)
+	}
+	regs[0], regs[30] = 0xd15f000000000001, dlsymPC+4
+	if rd, rm, ok := decodeMOVRegForTest(word(9)); !ok || rd != 16 || rm != 0 {
+		return result, fmt.Errorf("Logout dlsym result move rd=%d rm=%d ok=%t", rd, rm, ok)
+	}
+	regs[16] = regs[0]
+	if target, rt, ok := decodeArm64CBNZ(word(10), resolver.base+10*4); !ok ||
+		rt != 16 || target != resolver.base+12*4 || regs[16] == 0 {
+		return result, fmt.Errorf("Logout callback-ready branch target=0x%x rt=%d ok=%t", target, rt, ok)
+	}
+	if word(13)&0xfffffc1f != 0xd63f0000 || (word(13)>>5)&0x1f != 16 {
+		return result, fmt.Errorf("Logout callback instruction is not BLR X16: 0x%08x", word(13))
+	}
+	for i := 0; i <= 18; i++ {
+		regs[i] = 0xcbac000000000000 + uint64(i)
+	}
+	regs[0], regs[30] = 0, resolver.base+14*4
+
+	for idx := resolver.restoreStart; idx < resolver.restoreStart+5; idx++ {
+		fields, ok := decodePair64OffsetForTest(word(idx))
+		if !ok || !fields.load || fields.rn != 31 || fields.offset < 0 {
+			return result, fmt.Errorf("Logout restore word[%d] is not LDP on SP: %+v", idx, fields)
+		}
+		address := sp + uint64(fields.offset)
+		restorePairRegister(&regs, fields.rt, stack[address])
+		restorePairRegister(&regs, fields.rt2, stack[address+8])
+	}
+	stackBytes, ok := decodeAddSPImmediateForTest(word(resolver.stackAddIndex))
+	if !ok || stackBytes != frameBytes {
+		return result, fmt.Errorf("Logout resolver stack restore=%d ok=%t", stackBytes, ok)
+	}
+	sp += stackBytes
+	if sp != callerSP {
+		return result, fmt.Errorf("first resolver restore SP=0x%x, want 0x%x", sp, callerSP)
+	}
+
+	stockPC := resolver.base + uint64(resolver.tailBranchIndex*4)
+	target, link, ok := decodeArm64Branch(word(resolver.tailBranchIndex), stockPC)
+	if !ok || link || target != resolver.tailTarget {
+		return result, fmt.Errorf("first stock cleanup target=0x%x link=%t ok=%t", target, link, ok)
+	}
+	result.cleanupCalls = 1
+	result.firstStockX0, result.firstStockSP = regs[0], sp
+
+	// Model stock cleanup's balanced frame and RET through the LR left by the
+	// resolver. Its ordinary caller-saved X0 result is not relied upon.
+	regs[0] = 0xcccccccc
+	sp = callerSP
+	result.firstReturnPC = regs[30]
+	if result.firstReturnPC == originalLR {
+		return result, nil
+	}
+	if result.firstReturnPC != resolver.base+14*4 {
+		return result, fmt.Errorf("first cleanup returned to 0x%x, unexpected", result.firstReturnPC)
+	}
+
+	// The callback-return PC is the emitted LDP X0,X1,[SP] at index 14,
+	// with no intervening SUB. Re-entering it on the synthetic caller stack
+	// loads the zero first word into X0 and then restores/advances from that
+	// unrelated frame as the emitted tail dictates.
+	firstReload, ok := decodePair64OffsetForTest(word(14))
+	result.reentryWasLDPX0X1 = ok && firstReload.load && firstReload.rt == 0 &&
+		firstReload.rt2 == 1 && firstReload.rn == 31 && firstReload.offset == 0 &&
+		!isSubSPImmediateForTest(word(14))
+	if !result.reentryWasLDPX0X1 {
+		return result, fmt.Errorf("callback-return PC 0x%x is not LDP X0,X1,[SP]", result.firstReturnPC)
+	}
+	for idx := 14; idx <= 18; idx++ {
+		fields, ok := decodePair64OffsetForTest(word(idx))
+		if !ok || !fields.load || fields.rn != 31 || fields.offset < 0 {
+			return result, fmt.Errorf("re-entry restore word[%d] is not LDP on caller SP: %+v", idx, fields)
+		}
+		address := sp + uint64(fields.offset)
+		restorePairRegister(&regs, fields.rt, stack[address])
+		restorePairRegister(&regs, fields.rt2, stack[address+8])
+	}
+	result.reentryX0 = regs[0]
+	stackBytes, ok = decodeAddSPImmediateForTest(word(19))
+	if !ok || stackBytes != 80 {
+		return result, fmt.Errorf("re-entry stack advance=%d ok=%t, want 80", stackBytes, ok)
+	}
+	sp += stackBytes
+	secondPC := resolver.base + 20*4
+	target, link, ok = decodeArm64Branch(word(20), secondPC)
+	if !ok || link || target != resolver.tailTarget {
+		return result, fmt.Errorf("second stock cleanup target=0x%x link=%t ok=%t", target, link, ok)
+	}
+	result.cleanupCalls++
+	result.secondStockSP, result.secondStockX0, result.secondStockTarget = sp, regs[0], target
+	return result, nil
+}
+
+type pair64OffsetFields struct {
+	load        bool
+	rt, rt2, rn uint32
+	offset      int64
+}
+
+// This test-only decoder inspects the emitted A64 pair fields directly; it
+// deliberately does not compare against any resolver word-generator output.
+func decodePair64OffsetForTest(word uint32) (pair64OffsetFields, bool) {
+	op := word & 0xffc00000
+	if op != 0xa9000000 && op != 0xa9400000 {
+		return pair64OffsetFields{}, false
+	}
+	imm7 := int64((word >> 15) & 0x7f)
+	if imm7&0x40 != 0 {
+		imm7 -= 0x80
+	}
+	return pair64OffsetFields{
+		load:   op == 0xa9400000,
+		rt:     word & 0x1f,
+		rn:     (word >> 5) & 0x1f,
+		rt2:    (word >> 10) & 0x1f,
+		offset: imm7 * 8,
+	}, true
+}
+
+func assertLRPairSemantics(data []byte, resolver lrResolverCase) error {
+	store, ok := decodePair64OffsetForTest(resolverWord(data, resolver, 5))
+	if !ok || store.load || store.rt != 8 || store.rt2 != 30 || store.rn != 31 || store.offset != 64 {
+		return fmt.Errorf("%s LR save fields=%+v (decoded=%t), want STP Rt=8 Rt2=30 Rn=SP offset=64",
+			resolver.name, store, ok)
+	}
+	load, ok := decodePair64OffsetForTest(resolverWord(data, resolver, resolver.restoreStart+4))
+	if !ok || !load.load || load.rt != 8 || load.rt2 != 30 || load.rn != 31 || load.offset != 64 {
+		return fmt.Errorf("%s LR restore fields=%+v (decoded=%t), want LDP Rt=8 Rt2=30 Rn=SP offset=64",
+			resolver.name, load, ok)
+	}
+	return nil
+}
+
+// runEmittedResolverModel interprets only the bounded bridge path: its stack
+// allocation and STP/LDP pairs come from emitted bytes, dlsym/callback calls
+// clobber caller-saved registers, and the emitted stock B is followed by RET.
+func runEmittedResolverModel(data []byte, resolver lrResolverCase) error {
+	if resolver.base+uint64(resolver.wordCount*4) > uint64(len(data)) {
+		return fmt.Errorf("%s resolver exceeds image", resolver.name)
+	}
+	word := func(index int) uint32 { return resolverWord(data, resolver, index) }
+
+	regs := [31]uint64{}
+	for i := range regs {
+		regs[i] = 0x1000000000000000 + uint64(i)*0x101
+	}
+	const (
+		initialSP = uint64(0x100000)
+		initialLR = uint64(0xabcdef0012345678)
+		initialX0 = uint64(0x1122334455667788)
+	)
+	sp := initialSP
+	regs[0], regs[19], regs[30] = initialX0, 0x19191919, initialLR
+	stack := map[uint64]uint64{}
+
+	frameBytes, ok := decodeSubSPImmediateForTest(word(0))
+	if !ok || frameBytes != 80 {
+		return fmt.Errorf("%s frame allocation decodes to %d (ok=%t), want 80", resolver.name, frameBytes, ok)
+	}
+	sp -= frameBytes
+	for idx := 1; idx <= 5; idx++ {
+		fields, ok := decodePair64OffsetForTest(word(idx))
+		if !ok || fields.load || fields.rn != 31 || fields.offset < 0 {
+			return fmt.Errorf("%s save word[%d] is not STP [SP,#offset]: %+v", resolver.name, idx, fields)
+		}
+		address := sp + uint64(fields.offset)
+		stack[address] = pairRegisterValue(regs, fields.rt)
+		stack[address+8] = pairRegisterValue(regs, fields.rt2)
+	}
+
+	dlsymPC := resolver.base + 8*4
+	if target, link, ok := decodeArm64Branch(word(8), dlsymPC); !ok || !link || target != patchDlsymStubRVA {
+		return fmt.Errorf("%s emitted dlsym call target=0x%x link=%t ok=%t", resolver.name, target, link, ok)
+	}
+	// Simulate dlsym's caller-saved clobbers and its function-pointer result.
+	for i := 0; i <= 18; i++ {
+		regs[i] = 0xd15a000000000000 + uint64(i)
+	}
+	dlsymReturn := dlsymPC + 4
+	regs[0], regs[30] = 0xd15f000000000001, dlsymReturn
+	if rd, rm, ok := decodeMOVRegForTest(word(9)); !ok || rd != 16 || rm != 0 {
+		return fmt.Errorf("%s dlsym result move decodes rd=%d rm=%d ok=%t", resolver.name, rd, rm, ok)
+	}
+	regs[16] = regs[0]
+	cbnzTarget, cbnzReg, ok := decodeArm64CBNZ(word(10), resolver.base+10*4)
+	if !ok || cbnzReg != 16 || cbnzTarget != resolver.base+12*4 || regs[16] == 0 {
+		return fmt.Errorf("%s dlsym-ready branch target=0x%x rt=%d ok=%t", resolver.name, cbnzTarget, cbnzReg, ok)
+	}
+
+	if word(13)&0xfffffc1f != 0xd63f0000 || (word(13)>>5)&0x1f != 16 {
+		return fmt.Errorf("%s callback instruction is not BLR X16 (0x%08x)", resolver.name, word(13))
+	}
+	// BLR returns from a callback that clobbers caller-saved X0-X18 and LR.
+	callbackReturn := resolver.base + 14*4
+	for i := 0; i <= 18; i++ {
+		regs[i] = 0xcbac000000000000 + uint64(i)
+	}
+	regs[0], regs[30] = 0, callbackReturn
+
+	for idx := resolver.restoreStart; idx < resolver.restoreStart+5; idx++ {
+		fields, ok := decodePair64OffsetForTest(word(idx))
+		if !ok || !fields.load || fields.rn != 31 || fields.offset < 0 {
+			return fmt.Errorf("%s restore word[%d] is not LDP [SP,#offset]: %+v", resolver.name, idx, fields)
+		}
+		address := sp + uint64(fields.offset)
+		restorePairRegister(&regs, fields.rt, stack[address])
+		restorePairRegister(&regs, fields.rt2, stack[address+8])
+	}
+	stackBytes, ok := decodeAddSPImmediateForTest(word(resolver.stackAddIndex))
+	if !ok || stackBytes != frameBytes {
+		return fmt.Errorf("%s frame restore decodes to %d (ok=%t), want %d", resolver.name, stackBytes, ok, frameBytes)
+	}
+	sp += stackBytes
+	if sp != initialSP || regs[30] != initialLR || regs[0] != initialX0 {
+		return fmt.Errorf("%s bridge state SP=0x%x LR=0x%x X0=0x%x; want SP=0x%x LR=0x%x X0=0x%x",
+			resolver.name, sp, regs[30], regs[0], initialSP, initialLR, initialX0)
+	}
+
+	pc := resolver.base + uint64(resolver.tailBranchIndex*4)
+	target, link, ok := decodeArm64Branch(word(resolver.tailBranchIndex), pc)
+	if !ok || link || target != resolver.tailTarget {
+		return fmt.Errorf("%s stock continuation target=0x%x link=%t ok=%t", resolver.name, target, link, ok)
+	}
+	pc = target // execute the emitted direct B without changing LR
+	// The direct stock B preserves LR; after the stock continuation eventually
+	// returns, its RET must therefore select the original caller.
+	pc = regs[30] // bounded model of the stock continuation's RET
+	if pc != initialLR {
+		return fmt.Errorf("%s stock RET target=0x%x, want original LR 0x%x", resolver.name, pc, initialLR)
+	}
+	return nil
+}
+
+func resolverWord(data []byte, resolver lrResolverCase, index int) uint32 {
+	return binary.LittleEndian.Uint32(data[resolver.base+uint64(index*4):])
+}
+
+func putResolverWord(data []byte, resolver lrResolverCase, index int, word uint32) {
+	binary.LittleEndian.PutUint32(data[resolver.base+uint64(index*4):], word)
+}
+
+func pairRegisterValue(regs [31]uint64, reg uint32) uint64 {
+	if reg == 31 {
+		return 0
+	}
+	return regs[reg]
+}
+
+func restorePairRegister(regs *[31]uint64, reg uint32, value uint64) {
+	if reg != 31 {
+		regs[reg] = value
+	}
+}
+
+func decodeSubSPImmediateForTest(word uint32) (uint64, bool) {
+	if word&0xffc003ff != 0xd10003ff {
+		return 0, false
+	}
+	return uint64((word >> 10) & 0xfff), true
+}
+
+func decodeAddSPImmediateForTest(word uint32) (uint64, bool) {
+	if word&0xffc003ff != 0x910003ff {
+		return 0, false
+	}
+	return uint64((word >> 10) & 0xfff), true
+}
+
+func isSubSPImmediateForTest(word uint32) bool {
+	_, ok := decodeSubSPImmediateForTest(word)
+	return ok
+}
+
+func decodeMOVRegForTest(word uint32) (rd, rm uint32, ok bool) {
+	if word&0xffe0ffe0 != 0xaa0003e0 {
+		return 0, 0, false
+	}
+	return word & 0x1f, (word >> 16) & 0x1f, true
+}
+
 func TestReservedRangeValidation(t *testing.T) {
 	ranges, err := reservedRanges()
 	if err != nil {
@@ -325,6 +782,9 @@ func TestEmitAllPatchesSynthetic(t *testing.T) {
 	if err := verifyDecodedInstructions(prepared, out1); err != nil {
 		t.Fatal(err)
 	}
+	if err := verifyReauthInstructions(prepared, out1); err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify exact [0x53af68, 0x53af6c) write window and decoded auto-guest-entry branch.
 	foundAutoGuestRange := false
@@ -338,12 +798,12 @@ func TestEmitAllPatchesSynthetic(t *testing.T) {
 		t.Fatal("patchCallsiteRanges missing [0x53af68, 0x53af6c)")
 	}
 	gotAutoWord := binary.LittleEndian.Uint32(out1[0x53af68:])
-	if gotAutoWord != 0x141b0d08 {
-		t.Fatalf("patched auto-guest-entry word = 0x%08x, want 0x141b0d08", gotAutoWord)
+	if gotAutoWord != autoGuestEntryPatchedWord {
+		t.Fatalf("patched auto-guest-entry word = 0x%08x, want 0x%08x", gotAutoWord, autoGuestEntryPatchedWord)
 	}
-	if target, link, ok := decodeArm64Branch(gotAutoWord, 0x53af68); !ok || link || target != 0xbfe388 {
-		t.Fatalf("decoded patched auto-guest-entry = (0x%x, link=%t, ok=%t), want (0xbfe388, link=false, ok=true)",
-			target, link, ok)
+	if target, link, ok := decodeArm64Branch(gotAutoWord, autoGuestEntryRVA); !ok || link || target != loginReadyResolverRVA {
+		t.Fatalf("decoded patched auto-guest-entry = (0x%x, link=%t, ok=%t), want (%#x, link=false, ok=true)",
+			target, link, ok, loginReadyResolverRVA)
 	}
 	for _, adj := range []uint64{0x53af67, 0x53af6c} {
 		badAdj := append([]byte(nil), out1...)
@@ -366,6 +826,76 @@ func TestEmitAllPatchesSynthetic(t *testing.T) {
 	for _, w := range autoGuestGuardWindows {
 		if !bytes.Equal(prepared[w.start:w.unchanged], out1[w.start:w.unchanged]) {
 			t.Fatalf("auto-guest-entry guard window %s [0x%x..0x%x) mutated", w.name, w.start, w.unchanged)
+		}
+	}
+
+	for _, guard := range reauthGuardWindows {
+		end := guard.start + uint64(len(guard.words))*4
+		mutation := guard.start
+		if mutation >= guard.patchRVA && mutation < guard.patchRVA+4 {
+			mutation = guard.patchRVA + 4
+		}
+		if mutation >= end {
+			mutation = guard.patchRVA
+		}
+		badGuard := append([]byte(nil), prepared...)
+		badGuard[mutation] ^= 1
+		if _, err := emitAllPatches(badGuard); err == nil {
+			t.Fatalf("accepted mutated %s guard at 0x%x", guard.name, mutation)
+		}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		site   uint64
+		target uint64
+		link   bool
+	}{
+		{"legacy login visibility", legacyLoginVisibilityRVA, legacyLoginResolverRVA, false},
+		{"login-ready", autoGuestEntryRVA, loginReadyResolverRVA, false},
+		{"Logout reset", sessionOutSuccessRVA, sessionOutResolverRVA, false},
+		{"direct Delete Avatar reset", deleteDirectSuccessRVA, deleteDirectResolverRVA, false},
+		{"SNS Delete Avatar reset", deleteSNSuccessRVA, deleteSNSResolverRVA, false},
+		{"checkSession error", checkSessionErrorEntryRVA, checkSessionResolverRVA, false},
+		{"guest-generate error", guestGenerateErrorTailRVA, guestGenerateResolverRVA, false},
+		{"case 10043 GDPR-ready", gdprLoginReadyCallsiteRVA, gdprLoginReadyResolverRVA, true},
+	} {
+		t.Run("reauth branch "+tc.name, func(t *testing.T) {
+			word := binary.LittleEndian.Uint32(out1[tc.site:])
+			target, link, ok := decodeArm64Branch(word, tc.site)
+			if !ok || link != tc.link || target != tc.target {
+				t.Fatalf("branch=(0x%x, link=%t, ok=%t), want branch 0x%x (link=%t)", target, link, ok, tc.target, tc.link)
+			}
+			found := false
+			for _, r := range patchCallsiteRanges() {
+				if r.start == tc.site && r.end == tc.site+4 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("patchCallsiteRanges missing exact [%#x,%#x) branch window", tc.site, tc.site+4)
+			}
+		})
+	}
+	for _, site := range []uint64{
+		legacyLoginVisibilityRVA,
+		sessionOutSuccessRVA,
+		deleteDirectSuccessRVA,
+		deleteSNSuccessRVA,
+		checkSessionErrorEntryRVA,
+		guestGenerateErrorTailRVA,
+		gdprLoginReadyCallsiteRVA,
+	} {
+		for _, adj := range []uint64{site - 1, site + 4} {
+			badAdj := append([]byte(nil), out1...)
+			badAdj[adj] ^= 1
+			if err := verifyPatchOnlyDelta(prepared, badAdj); err == nil {
+				t.Fatalf("verifyPatchOnlyDelta accepted adjacent re-auth mutation at 0x%x", adj)
+			}
+			if err := verifyFullWriteSet(prepared, badAdj); err == nil {
+				t.Fatalf("verifyFullWriteSet accepted adjacent re-auth mutation at 0x%x", adj)
+			}
 		}
 	}
 
@@ -647,6 +1177,38 @@ func TestPatchMainExecutableRealBaselineIPAInMemory(t *testing.T) {
 	if len(out1) != len(original) {
 		t.Fatalf("output size changed: %d -> %d", len(original), len(out1))
 	}
+	case10043Guard := []uint32{0x52800021, gdprLoginReadyOrigWord, 0xf940ce60, 0xf9400008}
+	for i, want := range case10043Guard {
+		off := uint64(0x53c430 + i*4)
+		if got := binary.LittleEndian.Uint32(original[off:]); got != want {
+			t.Fatalf("locked source case-10043 word at 0x%x = 0x%08x, want 0x%08x", off, got, want)
+		}
+	}
+	if target, link, ok := decodeArm64Branch(case10043Guard[1], gdprLoginReadyCallsiteRVA); !ok || !link || target != 0x538db8 {
+		t.Fatalf("locked source case-10043 instruction decodes to 0x%x (link=%t ok=%t), want BL 0x538db8",
+			target, link, ok)
+	}
+	case10043Hook := binary.LittleEndian.Uint32(out1[gdprLoginReadyCallsiteRVA:])
+	if target, link, ok := decodeArm64Branch(case10043Hook, gdprLoginReadyCallsiteRVA); !ok || !link || target != gdprLoginReadyResolverRVA {
+		t.Fatalf("patched case-10043 instruction decodes to 0x%x (link=%t ok=%t), want BL 0x%x",
+			target, link, ok, gdprLoginReadyResolverRVA)
+	}
+	if !bytes.Equal(original[0x53c438:0x53c440], out1[0x53c438:0x53c440]) {
+		t.Fatal("case-10043 BL continuation at 0x53c438..0x53c440 was modified")
+	}
+	gdprResolver := out1[gdprLoginReadyResolverRVA:]
+	for idx, want := range map[int]uint32{
+		0:  0xd10043ff, // save stack frame
+		1:  0xf90003fe, // save BL return address
+		8:  0x52800020, // uint32 source mode = 1
+		10: 0xf94003fe, // restore BL return address
+		11: 0x910043ff, // restore stack pointer
+		12: 0xd65f03c0, // return to 0x53c438
+	} {
+		if got := binary.LittleEndian.Uint32(gdprResolver[uint64(idx*4):]); got != want {
+			t.Fatalf("GDPR-ready resolver word[%d] = 0x%08x, want 0x%08x", idx, got, want)
+		}
+	}
 
 	// Re-parse patched Mach-O and check exact delta + loader + decoded instructions.
 	mf, err := macho.NewFile(bytes.NewReader(out1))
@@ -699,15 +1261,13 @@ func TestPatchMainExecutableRealBaselineIPAInMemory(t *testing.T) {
 	} else if target, link, ok := decodeArm64Branch(got, 0x53af68); !ok || link || target != 0x538db8 {
 		t.Fatalf("baseline branch at 0x53af68 = (0x%x, link=%t, ok=%t)", target, link, ok)
 	}
-	if got := binary.LittleEndian.Uint32(out1[0x53af68:]); got != 0x141b0d08 {
-		t.Fatalf("patched word at 0x53af68 = 0x%08x, want 0x141b0d08", got)
-	} else if target, link, ok := decodeArm64Branch(got, 0x53af68); !ok || link || target != 0xbfe388 {
+	if got := binary.LittleEndian.Uint32(out1[0x53af68:]); got != autoGuestEntryPatchedWord {
+		t.Fatalf("patched word at 0x53af68 = 0x%08x, want 0x%08x", got, autoGuestEntryPatchedWord)
+	} else if target, link, ok := decodeArm64Branch(got, 0x53af68); !ok || link || target != loginReadyResolverRVA {
 		t.Fatalf("patched branch at 0x53af68 = (0x%x, link=%t, ok=%t)", target, link, ok)
 	}
-	for i := uint64(0x53af68); i < 0x53af6c; i++ {
-		if original[i] == out1[i] {
-			t.Fatalf("expected byte at 0x%x inside [0x53af68, 0x53af6c) to change", i)
-		}
+	if bytes.Equal(original[0x53af68:0x53af6c], out1[0x53af68:0x53af6c]) {
+		t.Fatal("expected login-ready branch word at [0x53af68,0x53af6c) to change")
 	}
 	if !bytes.Equal(original[0x53af6c:0x53af70], out1[0x53af6c:0x53af70]) {
 		t.Fatal("SetEndLoading post-patch boundary 0x53af6c..0x53af70 modified")
@@ -719,7 +1279,7 @@ func TestPatchMainExecutableRealBaselineIPAInMemory(t *testing.T) {
 	}
 
 	outHash := sha256.Sum256(out1)
-	t.Logf("verified in memory: baseline=%x patched=%x size=%d (6 resolvers + 6 exports + notice BL + 4 stub B + 3 guest callsites + auto-guest B + loader)",
+	t.Logf("verified in memory: baseline=%x patched=%x size=%d (10 exports + re-auth resolvers/callsites + existing runtime patches + loader)",
 		origHash, outHash, len(out1))
 }
 
@@ -739,6 +1299,9 @@ func syntheticPreparedImage() []byte {
 		}
 	}
 	for _, w := range autoGuestGuardWindows {
+		writeWords(buf[w.start:], w.words)
+	}
+	for _, w := range reauthGuardWindows {
 		writeWords(buf[w.start:], w.words)
 	}
 	return buf

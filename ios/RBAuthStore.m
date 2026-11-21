@@ -614,4 +614,63 @@ static BOOL RBWriteAll(int fd, const uint8_t *bytes, size_t length) {
     }
 }
 
+- (BOOL)clearCachedCookieError:(NSError * _Nullable * _Nullable)error {
+    if (error != NULL) {
+        *error = nil;
+    }
+
+    @synchronized(self) {
+        RBAuthStoreErrorCode openCode = RBAuthStoreErrorIO;
+        NSString *openMessage = nil;
+        int cachesFD =
+            RBOpenSecureDirectoryPath(_cachesPath.fileSystemRepresentation,
+                                      &openCode, &openMessage);
+        if (cachesFD < 0) {
+            if (openCode == RBAuthStoreErrorNotFound) {
+                return YES;
+            }
+            RBSetStoreError(error, openCode, openMessage);
+            return NO;
+        }
+
+        struct stat cookieSt;
+        if (fstatat(cachesFD, RBAuthStoreCookieName, &cookieSt,
+                    AT_SYMLINK_NOFOLLOW) != 0) {
+            int err = errno;
+            close(cachesFD);
+            if (err == ENOENT) {
+                return YES;
+            }
+            RBSetStoreError(error, RBAuthStoreErrorIO,
+                            @"auth store: cache stat failed");
+            return NO;
+        }
+        if (!S_ISREG(cookieSt.st_mode)) {
+            close(cachesFD);
+            RBSetStoreError(error, RBAuthStoreErrorCorrupt,
+                            @"auth store: unsafe cache file");
+            return NO;
+        }
+
+        if (unlinkat(cachesFD, RBAuthStoreCookieName, 0) != 0) {
+            int err = errno;
+            close(cachesFD);
+            if (err == ENOENT) {
+                return YES;
+            }
+            RBSetStoreError(error, RBAuthStoreErrorIO,
+                            @"auth store: cache cleanup failed");
+            return NO;
+        }
+        if (fsync(cachesFD) != 0) {
+            close(cachesFD);
+            RBSetStoreError(error, RBAuthStoreErrorIO,
+                            @"auth store: cache directory sync failed");
+            return NO;
+        }
+        close(cachesFD);
+        return YES;
+    }
+}
+
 @end

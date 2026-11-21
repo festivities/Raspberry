@@ -2,6 +2,14 @@
 
 Dated evidence, superseded snapshots, investigations and old handoff pairs, kept verbatim. This file never overrides [AGENTS.md](AGENTS.md), [PLAN.md](PLAN.md) or [CONTRACT.md](CONTRACT.md). Newest section last. Move an INITIATED/ACCEPTED pair here from PLAN once it is accepted and superseded.
 
+## 2026-11-21 — iOS re-auth continuation outcome
+
+- Accepted the `eee31aa` handoff and completed iOS re-auth runtime/packager integration. Runtime review corrected duplicate cleanup, stale queued entries, transient-error classification and consent-ready 404 sequencing.
+- The first device build reached Garden but crashed on user-confirmed Logout. A new private crash report and native review established incorrect resolver return-state preservation. The corrected package differs in exactly ten main-executable bytes across five save/restore pairs, with unchanged own dylib.
+- Semantic emitted-instruction and state-model tests reject the failed words; a separate bounded model reproduces a plausible return/re-entry route to the null-object crash, not an observed production stack snapshot.
+- Corrected in-place recovery displayed Discord sign-in, preserved data and produced no new crash. Main inspected that screenshot. The user then confirmed fresh Discord sign-in returns to Garden and Logout returns to the Discord prompt.
+- Delete Avatar was explicitly left unverified; user plans the next manual check. Android equivalent work is next on Windows, superseding the former iOS-only priority. No Android changes/device tests, Cherry operations, credential reads or archive mutations in this slice.
+
 ## 2026-11-09 — repository created
 
 - The user created `festivities/Raspberry` (public, MIT, "Patch LINE PLAY for use with Cherry") and asked the Cherry session to prepare this context. The Cherry session wrote `.gitignore` and `.agents/` (AGENTS, PLAN, CONTRACT, HISTORY) and left the first handoff in PLAN. No code exists.
@@ -144,3 +152,25 @@ The earlier same-day quota interruption, red gate and partial-edit notes are his
 - iOS static slice complete: main inspected the appended raw setter/consumer/predicate disassembly and pseudocode (`ida-evidence.txt` lines 1335–1632). Unsigned range handling makes state 0 and states above 10 normal in the compact predicate; within 1–10 the abnormal set exactly matches Android. No iOS runtime, signing/installability, final message-effect or routing/login acceptance is claimed. Further iOS compatibility implementation waits on those explicit unknowns, not on an assumption that the SDK is missing or weaker.
 - Android tooling recovery: private `%TEMP%\opencode\raspberry\routing-20261112\scripts\raspberry-adb.ps1` now supplies bounded explicit-serial calls, Raspberry identity rechecks and binary-safe private captures; its README gives invocations. Main reviewed it and reran the Windows PowerShell 5.1 host selftest successfully after fixing a PS7-only generic call. Tester is redelegated to execute the existing `preflight` entry first, not recreate the helper. This helper is not a permission bypass and must not be used on other AVDs.
 - [V tester preflight] Raspberry is now verified at `emulator-5559`, 1290×2796, and the owned stub PID/executable/listeners match its private config. App/package/descriptor and routing checks still did not run: passing array arguments through `powershell -File` failed. A small private argv-forwarding wrapper is being prepared; no app action, fixture or preference mutation has occurred.
+
+
+## 2026-11-20 → 2026-11-21 — iOS routing, Discord sign-in, asset download, auto-guest-entry, WebView router, and CLI promotion
+
+### HANDOFF INITIATED — 2026-11-20 (user switching sessions)
+
+Receiving agent: this chat has no prior context. Read this section first, then [AGENTS.md](AGENTS.md), [CONTRACT.md](CONTRACT.md), and `docs/ios.md`. Read Cherry's `.agents/CONTRACT.md` only; do not edit Cherry. Append **HANDOFF ACCEPTED** after loading context, with any corrections. Older handoff pairs stay in HISTORY. The chronological notes below are background, not the resume point.
+
+**Stopped for handoff.** No subagent or device test is running. The user is switching sessions. Keep later chat at compatibility and test-status level. Do not restate binary-edit steps, addresses, or byte lists in chat; those details, if still needed, stay in the existing private notes.
+
+**Goal.** Continue iOS compatibility for the user's own LINE PLAY 10.1.0 app on the existing virtual iPhone `myphone`: operator-chosen Cherry routing and Discord-only sign-in. Android is mostly working and is not the current task. Use vphone, not PlayCover. Preserve `myphone`, installed app data, and the source archive. Ask before every tool installation. Do not use global host Python. Subagents, when needed, use `openai/gpt-6-luna#max`; if quota is exhausted, stop and tell the user. Do not retry, switch models, or resume until the user says so. Cherry is read-only. Do not hard-code an operator host or port. Do not commit or push unless the user asks.
+
+**Current milestone.** A single notice-path diagnostic that returns a simulated missing-notice error and makes no network request of its own. It does not prove routing, TLS, sign-in, or that the rest of startup networking is off. A cached closure notice is not cleared by a missing-notice result, so absence of that notice is supporting context only.
+
+### HANDOFF ACCEPTED — 2026-11-20
+
+Context loaded from `PLAN.md`, `AGENTS.md`, `CONTRACT.md`, `docs/ios.md`, and read-only `/Users/festivity/dev/Cherry/.agents/CONTRACT.md`.
+
+- **V2 diagnostic & first real iOS unified-notice request passed (`36d3d91`):** fixed `0755` container `tmp` directory permission check in `RBNotice404Diagnostic.v2.dylib`, verified `RBN2` (`ready=1/entry=1/outcome=1`), promoted `RBNoticeRouteClient` / `RBNoticeRouteErrorAdapter` / `+[RBEndpoint endpointFromFileURL:error:]`, and verified `RBN3` (`ready=1/endpoint=1/entry=1/kind=1` HTTP 404 over platform TLS) on `myphone`.
+- **Combined unified-notice + native socket/DNS marker routing passed (`a9a4f21`, `38138da`, `20949ae`):** added `RBAuthStore` and `RBSocketRouter`, wired `RBAuthFlowCommitter` into `RBAuthFlowCoordinator`, and verified `RBN4` (`dns_redirected=12/connect_rewritten=12`) on `myphone`.
+- **In-container auth store, guest credential gate, and UIKit Discord sign-in overlay passed (`e5ba778`, `8cd2666`, `0d30284`, `d184b2d`):** added `RBAuthCallbackSanitizer`, `RBAuthGuestCredentialGate`, `RBAuthSignInSessionController`, `RBAuthUIKitSignInOverlay`, and in-app `ASWebAuthenticationSession` sheet-dismissal handoff in `RBAuthUIKitLifecycleBinding`. User completed real Discord sign-in on `myphone` (`PID 6080`), persisting `Library/Application Support/raspberry/auth.json` (105 B, `0600`) and downloading all 374 MB of first-run iOS assets after Cherry deployed `5028068` (`79b621b`).
+- **Auto-guest-entry, WebView URL router, and tracked `raspberry ipa patch` CLI passed (`eee31aa`):** retargeted `NaLoginLayer::SetEndLoading` eligible tail (`0x53af68` -> `0xbfe388` `createGuestAccount`, tag 13), verified no-cookie auto-guest login (`PID 6733` -> Daily Bonus, `avcookie.na` 345 B created), cookie-present relaunch (`PID 6755` -> Daily Bonus), and live Garden stability (`device/ios-garden-10s.jpg`, zero `[AA-006]`, zero crashes). Added `RBWebURLRouter`, promoted `ios/RBRaspberryRuntime.{h,m}`, `scripts/build-ios-runtime.sh`, `internal/ipa/{patch,package}.go`, and `raspberry ipa patch`, passed `scripts/gate.sh`, and verified CLI-built `raspberry-lineplay-10.1.0-unsigned.ipa` (`d1054e7b5a12969c17ab168d7bd295ae6b6d833bc561fa468f2ff062ccb9b4f9`) launching directly into live Garden (`PID 7034`, `device/ios-cli-v1-garden.jpg`).

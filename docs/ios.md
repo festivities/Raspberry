@@ -1,6 +1,6 @@
 # iOS compatibility assessment
 
-Raspberry can inspect the supplied decrypted LINE PLAY 10.1.0 IPA read-only; iOS patching/signing is not yet implemented in the CLI. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
+Raspberry can inspect the supported decrypted LINE PLAY 10.1.0 IPA and build an unsigned compatibility IPA with `raspberry ipa patch`. The patched IPA has run in a virtual iPhone; conventional signing, provisioning and physical-device installation are not verified. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
 
 The original November 12 assessment was static-only. On November 17 the user supplied a macOS/vphone environment and authorized autonomous iOS work, superseding the earlier deferral. Static results still cannot establish that re-signing, AirArmor, login, networking or gameplay works on a device.
 
@@ -100,6 +100,16 @@ Main-reviewed response handlers distinguish failed `checkSession` (event `10043`
 Main reviewed the response parser and common completion sink: HTTP status and body `errorCode` are separate fields. The sink initializes the body-code field to zero and the failure dispatch passes that result buffer unchanged. An HTTP 404 skips body parsing, and a native transport error without an HTTP response does not fill the body-code field. The stock `checkSession` failure callback can therefore remove its cached cookie without an authoritative invalid-session response. Do not use that cleanup as evidence of revocation or as a blanket trigger for Discord re-authentication.
 
 For freshly allocated account requests, the reviewed preflight-failure path skips transport but still queues a normal failure completion and releases the worker's accounting. It is not an in-flight abort. Because that failure can also trigger the stock cookie cleanup, it is only a candidate when fresh sign-in is already required. Static evidence identifies the dispatch key as the route identity plus the operation ID; IDs alone are scoped to each dispatcher. The base validator has a local failure path for a null context, but replacing the worker's context would break cleanup. Request association, state transitions and runtime ordering still need verification; no guard has been implemented.
+
+## Session reset and re-authentication (in progress)
+
+Cherry reports that successful Logout and Delete Avatar revoke the stored sign-in code. A newer sign-in on the same account also revokes older sessions and codes. The iOS client should return to Discord sign-in after a successful reset, a `checkSession` HTTP 404, or a `guest/generate` rejection matching Cherry's HTTP 400 response. After fresh Discord authorization, it should resume the eligible guest flow without showing legacy sign-in choices. A timeout, offline failure, or 5xx response is not evidence of revocation.
+
+**Verification:** the full host gate and targeted race tests pass, and deterministic unsigned IPAs upgraded in place and reached Garden with the existing session. **Logout testing failed:** the user confirmed Logout and the app crashed to Home; a new crash report was collected for investigation. Do not treat the reset implementation as accepted. Other recovery paths remain unverified on device.
+
+The confirmed return-state defect was corrected and checked in the packaged IPA. After an in-place upgrade, the recovery launch displayed the Discord prompt without a new crash; app data remained intact. **User-verified (2026-11-21):** fresh Discord sign-in returns automatically to Garden, and Logout now returns to the Discord prompt. Delete Avatar, refused-code and invalid-session recovery remain unverified on device; the user plans Delete Avatar next.
+
+Verify a normal cookie-present relaunch before testing Logout. Use an isolated test identity for Delete Avatar, second-device sign-in, and refused-code cases: Delete Avatar destroys avatar data, and signing in on a second device can terminate a live session. Keep those tests separate from the preserved Garden smoke test. Report what each run actually proves; seeing the overlay is not proof that the next Discord exchange and automatic guest entry succeed.
 
 ## Other runtime/signing paths (historical prerequisites)
 

@@ -91,7 +91,11 @@ printf '%s\n' \
     '_rb_ios_freeaddrinfo' \
     '_rb_ios_gethostbyname' \
     '_rb_ios_connect' \
-    '_rb_ios_guest_unique_code' > "$tmp/exported-symbols.list"
+    '_rb_ios_guest_unique_code' \
+    '_rb_ios_on_login_ready' \
+    '_rb_ios_on_session_reset' \
+    '_rb_ios_on_check_session_error' \
+    '_rb_ios_on_guest_generate_error' > "$tmp/exported-symbols.list"
 
 xcrun --sdk iphoneos clang \
     -target arm64-apple-ios15.0 -isysroot "$sdk" \

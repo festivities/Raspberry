@@ -90,9 +90,17 @@ The SDK can retain still-valid old notices after a successful response, so routi
 
 **Risk:** early AirArmor user-ID registration happens before the startup runnable. If an absent UUID causes a failure, defer the real registration until authentication and preserve its result handling; do not suppress state 1 or unrelated protection checks. Automatic guest-transport entry after Discord also needs a verified engine-thread integration point.
 
-## Experimental iOS loader probe
+## iOS session-reset compatibility (2026-11-21)
 
-This separate developer probe is **not** a complete iOS patch and is not exposed by `raspberry patch`. The public iOS CLI command remains read-only `ipa inspect`.
+The hash-locked `ipa patch` command now packages the iOS runtime; the loader-only probes below are historical. `internal/ipa/patch.go` owns guarded native edits and RX-slack resolvers for the eligible scene-ready guest entry, legacy login visibility, successful Logout and both Delete Avatar success paths, `checkSession` failure, and guest-generation refusal. Required runtime exports are checked before packaging; retained archive entries remain unchanged.
+
+The runtime clears only its origin-bound authorization and the exact cached `avcookie.na` on a confirmed reset. A clean HTTP 404 or Cherry HTTP 400/errorCode 400 is distinct from transport or server errors. Native consent-ready gates precede automatic guest re-entry; queued entries are generation-fenced. No stock Keychain UUID, protection check, account/session fields or server behavior is changed.
+
+**Verification:** host gates, decoded emitted-instruction/register/stack regressions, locked-baseline exact-write tests, deterministic IPA pairs and independent packaged-instruction review pass. An initial Logout crash exposed incorrect return-state preservation; the corrected build recovers to Discord, and the user confirms sign-in → Garden → Logout → Discord. Delete Avatar and other error recovery paths still need device tests. Risk: a new native seam or register/return-state error can crash the app; existing generated-byte equality checks alone are not semantic proof. Keep tests of destructive deletion on a disposable avatar.
+
+## Experimental iOS loader probe (historical)
+
+This separate developer probe was **not** a complete iOS patch. It predates the current `raspberry ipa patch` command.
 
 - **Target:** locked IPA SHA-256 `987fefccfc235cc73fdd6363c064887272575586f334b45fcb10d213a8772532`; main executable 40,969,408 bytes, SHA-256 `e4029164cb6cbf80dee7b17250ca706bfbab9f218436f007bbbbcbc8baf20141`.
 - **Change:** increment `ncmds` 76→77 and `sizeofcmds` 8,248→8,320 (header bytes `[16,24)`); insert one 72-byte `LC_LOAD_DYLIB` at file offset 8,280 for `@executable_path/Frameworks/libraspberry.dylib`. No section/segment is shifted. The first file-backed section starts at 21,852, leaving 13,572 bytes of verified zero header slack.

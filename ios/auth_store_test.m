@@ -231,11 +231,37 @@ static void TestCacheCookieCleanupAndSymlinkRefusal(NSString *root) {
     CHECK([[store authorizedUniqueCodeForEndpoint:endpoint error:NULL] isEqualToString:RBTestCodeB],
           "second commit updates uniqueCode");
 
+    CHECK(WriteRawFile(cookiePath, [@"runtime-cookie" dataUsingEncoding:NSUTF8StringEncoding],
+                       0600),
+          "create cookie for explicit cleanup");
+    error = [NSError errorWithDomain:@"stale" code:99 userInfo:nil];
+    CHECK([store clearCachedCookieError:&error] && error == nil,
+          "explicit cached-cookie cleanup succeeds and clears stale error");
+    CHECK(![fm fileExistsAtPath:cookiePath],
+          "explicit cached-cookie cleanup removes avcookie.na");
+    CHECK([[NSData dataWithContentsOfFile:siblingPath] isEqualToData:siblingBytes],
+          "explicit cached-cookie cleanup leaves sibling untouched");
+    error = nil;
+    CHECK([store clearCachedCookieError:&error] && error == nil,
+          "explicit cached-cookie cleanup is idempotent");
+
     NSString *targetPath = [root stringByAppendingPathComponent:@"do-not-delete.dat"];
     NSData *targetBytes = [@"protected-target" dataUsingEncoding:NSUTF8StringEncoding];
     CHECK(WriteRawFile(targetPath, targetBytes, 0600), "create symlink target");
     CHECK(symlink(targetPath.fileSystemRepresentation, cookiePath.fileSystemRepresentation) == 0,
           "create symlink avcookie.na");
+
+    error = nil;
+    CHECK(![store clearCachedCookieError:&error],
+          "explicit cached-cookie cleanup refuses symlink avcookie.na");
+    CheckErrorClean(error, RBAuthStoreErrorCorrupt, RBTestCodeA,
+                    "explicit symlink avcookie.na cleanup reports Corrupt");
+    struct stat explicitSymSt;
+    CHECK(lstat(cookiePath.fileSystemRepresentation, &explicitSymSt) == 0 &&
+              S_ISLNK(explicitSymSt.st_mode),
+          "explicit cached-cookie cleanup preserves symlink");
+    CHECK([[NSData dataWithContentsOfFile:targetPath] isEqualToData:targetBytes],
+          "explicit cached-cookie cleanup preserves symlink target");
 
     error = nil;
     CHECK(![store commitUniqueCode:RBTestCodeA forEndpoint:endpoint error:&error],

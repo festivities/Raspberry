@@ -37,11 +37,16 @@
 #import <mach-o/loader.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <os/log.h>
 
 static const uintptr_t RBRaspberryRuntimeContinuationRVA = 0x12D8BE8u;
 static const uintptr_t RBRaspberryRuntimeRequestMethodRVA = 0x12D7648u;
 static const uintptr_t RBRaspberryRuntimeUserAgentRVA = 0x12D6368u;
 static const uintptr_t RBRaspberryRuntimeLCErrorFactoryRVA = 0x12EBF00u;
+static const uintptr_t RBRaspberryRuntimeCreateGuestAccountRVA = 0xBFE388u;
+static const uintptr_t RBRaspberryRuntimeDispatcherInstanceSlotRVA = 0x2202AB0u;
+static const uint64_t RBRaspberryRuntimeCreateGuestAccountVMAddress = 0x100BFE388ULL;
+static const uint32_t RBRaspberryRuntimeCreateGuestAccountPrologue = 0xA9BE4FF4u;
 static const uint64_t RBRaspberryRuntimePreferredImageBase = 0x100000000ULL;
 static const uint64_t RBRaspberryRuntimeLCError404Type = 2u;
 static const int64_t RBRaspberryRuntimeHTTP404Code = 404;
@@ -56,9 +61,15 @@ typedef struct {
     uint64_t textVMAddress;
     uint64_t textVMSize;
     vm_prot_t textInitialProtection;
+    uint64_t dataVMAddress;
+    uint64_t dataVMSize;
+    vm_prot_t dataInitialProtection;
+    intptr_t slide;
 } RBRaspberryRuntimeMainImage;
 
 static RBRaspberryRuntimeMainImage RBRaspberryRuntimeMainImageInfo;
+static intptr_t RBRaspberryRuntimeMainImageSlide = 0;
+static BOOL RBRaspberryRuntimeMainImageSlideValid = NO;
 static Class RBRaspberryRuntimeNoticeCenterClass;
 static IMP RBRaspberryRuntimeUserAgentExpectedIMP;
 static RBAuthSignInSessionController * __strong RBRaspberryRuntimeSessionController;
@@ -77,11 +88,17 @@ static _Atomic(uint32_t) RBRaspberryRuntimeReadiness = 0;
 static _Atomic(uint32_t) RBRaspberryRuntimeRouterInitialized = 0;
 static _Atomic(bool) RBRaspberryRuntimeHasEndpoint = false;
 static _Atomic(bool) RBRaspberryRuntimeAttemptedOnce = false;
+static BOOL RBRaspberryRuntimePendingGuestEntry = NO;
+static BOOL RBRaspberryRuntimeGuestEntryQueued = NO;
+static BOOL RBRaspberryRuntimeSceneReadyEntrySeen = NO;
+static BOOL RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+static uint64_t RBRaspberryRuntimeGuestEntryGeneration = 0;
 static RBSocketRouter RBRaspberryRuntimeSocketRouter;
 static id __strong RBRaspberryRuntimeHTTP404Error;
 static id __strong RBRaspberryRuntimeLocalError;
 static RBEndpoint * __strong RBRaspberryRuntimeEndpoint;
 static RBAuthGuestCredentialGate * __strong RBRaspberryRuntimeGate;
+static RBAuthStore * __strong RBRaspberryRuntimeAuthStore;
 static id __unsafe_unretained RBRaspberryRuntimeExpectedReceiver;
 static SEL RBRaspberryRuntimeExpectedSelector;
 static SEL RBRaspberryRuntimeUserAgentSelector;
@@ -205,22 +222,25 @@ static NSURL * _Nullable RBRaspberryRuntimePrepareSecureDirectoryURL(
     return [NSURL fileURLWithPath:cleanString isDirectory:YES];
 }
 
-static RBAuthGuestCredentialGate * _Nullable RBRaspberryRuntimeInitializeGate(
-    RBEndpoint * _Nullable endpoint,
+static RBAuthStore * _Nullable RBRaspberryRuntimeInitializeStore(
     NSURL * _Nullable rawAppSupportURL,
     NSURL * _Nullable rawCachesURL) {
-    (void)[RBAuthCallbackSanitizer class];
-    if (endpoint == nil) {
-        return nil;
-    }
-    NSURL *appSupportURL = RBRaspberryRuntimePrepareSecureDirectoryURL(rawAppSupportURL);
-    NSURL *cachesURL = RBRaspberryRuntimePrepareSecureDirectoryURL(rawCachesURL);
+    NSURL *appSupportURL =
+        RBRaspberryRuntimePrepareSecureDirectoryURL(rawAppSupportURL);
+    NSURL *cachesURL =
+        RBRaspberryRuntimePrepareSecureDirectoryURL(rawCachesURL);
     if (appSupportURL == nil || cachesURL == nil) {
         return nil;
     }
-    RBAuthStore *store = [[RBAuthStore alloc] initWithBaseDirectoryURL:appSupportURL
-                                                    cachesDirectoryURL:cachesURL];
-    if (store == nil) {
+    return [[RBAuthStore alloc] initWithBaseDirectoryURL:appSupportURL
+                                    cachesDirectoryURL:cachesURL];
+}
+
+static RBAuthGuestCredentialGate * _Nullable RBRaspberryRuntimeInitializeGate(
+    RBEndpoint * _Nullable endpoint,
+    RBAuthStore * _Nullable store) {
+    (void)[RBAuthCallbackSanitizer class];
+    if (endpoint == nil || store == nil) {
         return nil;
     }
     RBAuthGuestCredentialGate *gate =
@@ -372,13 +392,19 @@ static id RBRaspberryRuntimeFailClosed(void) {
     return localError;
 }
 
-static BOOL RBRaspberryRuntimeReadTextSegment(
+static BOOL RBRaspberryRuntimeReadRequiredSegments(
     const struct mach_header_64 *header,
     uint64_t *textVMAddress,
     uint64_t *textVMSize,
-    vm_prot_t *textInitialProtection) {
+    vm_prot_t *textInitialProtection,
+    uint64_t *dataVMAddress,
+    uint64_t *dataVMSize,
+    vm_prot_t *dataInitialProtection) {
     if (header == NULL || header->magic != MH_MAGIC_64 ||
         header->filetype != MH_EXECUTE || header->cputype != CPU_TYPE_ARM64 ||
+        textVMAddress == NULL || textVMSize == NULL ||
+        textInitialProtection == NULL || dataVMAddress == NULL ||
+        dataVMSize == NULL || dataInitialProtection == NULL ||
         header->ncmds == 0 || header->ncmds > 4096 ||
         header->sizeofcmds == 0 || header->sizeofcmds > 1024u * 1024u) {
         return NO;
@@ -387,6 +413,7 @@ static BOOL RBRaspberryRuntimeReadTextSegment(
     const uint8_t *cursor = (const uint8_t *)(header + 1);
     size_t remaining = header->sizeofcmds;
     BOOL foundText = NO;
+    BOOL foundData = NO;
     for (uint32_t index = 0; index < header->ncmds; index++) {
         if (remaining < sizeof(struct load_command)) {
             return NO;
@@ -413,14 +440,27 @@ static BOOL RBRaspberryRuntimeReadTextSegment(
                 *textVMAddress = segment->vmaddr;
                 *textVMSize = segment->vmsize;
                 *textInitialProtection = segment->initprot;
+            } else if (strncmp(segment->segname, "__DATA",
+                               sizeof(segment->segname)) == 0) {
+                if (foundData) {
+                    return NO;
+                }
+                foundData = YES;
+                *dataVMAddress = segment->vmaddr;
+                *dataVMSize = segment->vmsize;
+                *dataInitialProtection = segment->initprot;
             }
         }
         cursor += loadCommand->cmdsize;
         remaining -= loadCommand->cmdsize;
     }
-    return foundText && remaining == 0 &&
+    return foundText && foundData && remaining == 0 &&
         *textVMAddress == RBRaspberryRuntimePreferredImageBase &&
-        (*textInitialProtection & VM_PROT_EXECUTE) != 0;
+        (*textInitialProtection & VM_PROT_EXECUTE) != 0 &&
+        *dataVMAddress >= RBRaspberryRuntimePreferredImageBase &&
+        *dataVMSize != 0 &&
+        (*dataInitialProtection & (VM_PROT_READ | VM_PROT_WRITE)) ==
+            (VM_PROT_READ | VM_PROT_WRITE);
 }
 
 static BOOL RBRaspberryRuntimeFindUniqueMainImage(
@@ -434,6 +474,7 @@ static BOOL RBRaspberryRuntimeFindUniqueMainImage(
     }
 
     NSUInteger executableCount = 0;
+    uint32_t candidateIndex = 0;
     const struct mach_header_64 *candidateHeader = NULL;
     const char *candidatePath = NULL;
     for (uint32_t index = 0; index < imageCount; index++) {
@@ -445,6 +486,7 @@ static BOOL RBRaspberryRuntimeFindUniqueMainImage(
             (const struct mach_header_64 *)header;
         if (header64->filetype == MH_EXECUTE) {
             executableCount++;
+            candidateIndex = index;
             candidateHeader = header64;
             candidatePath = _dyld_get_image_name(index);
         }
@@ -467,8 +509,18 @@ static BOOL RBRaspberryRuntimeFindUniqueMainImage(
     uint64_t textVMAddress = 0;
     uint64_t textVMSize = 0;
     vm_prot_t textInitialProtection = 0;
-    if (!RBRaspberryRuntimeReadTextSegment(candidateHeader, &textVMAddress,
-            &textVMSize, &textInitialProtection)) {
+    uint64_t dataVMAddress = 0;
+    uint64_t dataVMSize = 0;
+    vm_prot_t dataInitialProtection = 0;
+    if (!RBRaspberryRuntimeReadRequiredSegments(candidateHeader, &textVMAddress,
+            &textVMSize, &textInitialProtection, &dataVMAddress, &dataVMSize,
+            &dataInitialProtection)) {
+        return NO;
+    }
+
+    intptr_t slide = _dyld_get_image_vmaddr_slide(candidateIndex);
+    if ((uint64_t)(uintptr_t)candidateHeader !=
+        textVMAddress + (uint64_t)slide) {
         return NO;
     }
 
@@ -477,6 +529,10 @@ static BOOL RBRaspberryRuntimeFindUniqueMainImage(
     mainImage->textVMAddress = textVMAddress;
     mainImage->textVMSize = textVMSize;
     mainImage->textInitialProtection = textInitialProtection;
+    mainImage->dataVMAddress = dataVMAddress;
+    mainImage->dataVMSize = dataVMSize;
+    mainImage->dataInitialProtection = dataInitialProtection;
+    mainImage->slide = slide;
     return YES;
 }
 
@@ -497,6 +553,26 @@ static BOOL RBRaspberryRuntimeRVAIsExecutable(
     }
     return (uint64_t)rva >= textRVA &&
         (uint64_t)rva + size <= textRVA + mainImage->textVMSize;
+}
+
+static BOOL RBRaspberryRuntimeRVAIsWritableData(
+    const RBRaspberryRuntimeMainImage *mainImage,
+    uintptr_t rva,
+    size_t size) {
+    if (mainImage == NULL ||
+        (mainImage->dataInitialProtection & (VM_PROT_READ | VM_PROT_WRITE)) !=
+            (VM_PROT_READ | VM_PROT_WRITE) ||
+        mainImage->dataVMAddress < RBRaspberryRuntimePreferredImageBase ||
+        size == 0 || rva > UINTPTR_MAX - size) {
+        return NO;
+    }
+    uint64_t dataRVA = mainImage->dataVMAddress -
+        RBRaspberryRuntimePreferredImageBase;
+    if (mainImage->dataVMSize > UINT64_MAX - dataRVA) {
+        return NO;
+    }
+    return (uint64_t)rva >= dataRVA &&
+        (uint64_t)rva + size <= dataRVA + mainImage->dataVMSize;
 }
 
 static BOOL RBRaspberryRuntimeClassIsInMainImage(
@@ -662,6 +738,131 @@ static UIViewController * _Nullable RBRaspberryRuntimeResolveForegroundOwner(voi
     return rootController;
 }
 
+@interface RBRaspberryRuntimeCommitterProxy : NSObject <RBAuthFlowCommitter>
+@property(nonatomic, strong, readonly) id<RBAuthFlowCommitter> innerCommitter;
+@property(nonatomic, copy, readonly, nullable) dispatch_block_t onAuthorizedCommit;
+- (nullable instancetype)initWithInnerCommitter:(nullable id<RBAuthFlowCommitter>)innerCommitter
+                             onAuthorizedCommit:(nullable dispatch_block_t)onAuthorizedCommit;
+@end
+
+@implementation RBRaspberryRuntimeCommitterProxy
+
+- (nullable instancetype)initWithInnerCommitter:(nullable id<RBAuthFlowCommitter>)innerCommitter
+                             onAuthorizedCommit:(nullable dispatch_block_t)onAuthorizedCommit {
+    if (innerCommitter == nil) {
+        return nil;
+    }
+    self = [super init];
+    if (self != nil) {
+        _innerCommitter = innerCommitter;
+        _onAuthorizedCommit = [onAuthorizedCommit copy];
+    }
+    return self;
+}
+
+- (BOOL)commitUniqueCode:(NSString *)uniqueCode
+             forEndpoint:(RBEndpoint *)endpoint
+                   error:(NSError * _Nullable * _Nullable)error {
+    BOOL committed = [_innerCommitter commitUniqueCode:uniqueCode
+                                           forEndpoint:endpoint
+                                                 error:error];
+    if (committed && _onAuthorizedCommit != nil) {
+        _onAuthorizedCommit();
+    }
+    return committed;
+}
+
+@end
+
+typedef void (*RBRaspberryRuntimeCreateGuestAccountFunction)(void);
+
+static RBRaspberryRuntimeCreateGuestAccountFunction
+RBRaspberryRuntimeCreateGuestAccountIfReady(void) {
+    if (![NSThread isMainThread] ||
+        atomic_load_explicit(&RBRaspberryRuntimeReadiness,
+                             memory_order_acquire) != 1U ||
+        !RBRaspberryRuntimeMainImageSlideValid) {
+        return NULL;
+    }
+    RBAuthGuestCredentialGate *gate = RBRaspberryRuntimeGate;
+    if (gate == nil || !gate.isAuthorized) {
+        return NULL;
+    }
+    if (!RBRaspberryRuntimeRVAIsExecutable(
+            &RBRaspberryRuntimeMainImageInfo,
+            RBRaspberryRuntimeCreateGuestAccountRVA,
+            sizeof(uint32_t)) ||
+        !RBRaspberryRuntimeRVAIsWritableData(
+            &RBRaspberryRuntimeMainImageInfo,
+            RBRaspberryRuntimeDispatcherInstanceSlotRVA,
+            sizeof(uintptr_t)) ||
+        (uintptr_t)RBRaspberryRuntimeMainImageInfo.header >
+            UINTPTR_MAX - RBRaspberryRuntimeDispatcherInstanceSlotRVA) {
+        return NULL;
+    }
+    uintptr_t fnAddr = (uintptr_t)(
+        (uint64_t)RBRaspberryRuntimeMainImageSlide +
+        RBRaspberryRuntimeCreateGuestAccountVMAddress);
+    if (fnAddr != (uintptr_t)RBRaspberryRuntimeMainImageInfo.header +
+                      RBRaspberryRuntimeCreateGuestAccountRVA) {
+        return NULL;
+    }
+    uint32_t prologue = 0;
+    memcpy(&prologue, (const void *)fnAddr, sizeof(prologue));
+    if (prologue != RBRaspberryRuntimeCreateGuestAccountPrologue) {
+        return NULL;
+    }
+    uintptr_t slotAddr =
+        (uintptr_t)RBRaspberryRuntimeMainImageInfo.header +
+        RBRaspberryRuntimeDispatcherInstanceSlotRVA;
+    uintptr_t dispatcher = 0;
+    memcpy(&dispatcher, (const void *)slotAddr, sizeof(dispatcher));
+    if (dispatcher == 0) {
+        return NULL;
+    }
+    return (RBRaspberryRuntimeCreateGuestAccountFunction)fnAddr;
+}
+
+static void RBRaspberryRuntimeQueuePendingGuestEntry(void) {
+    if (![NSThread isMainThread] ||
+        !RBRaspberryRuntimePendingGuestEntry ||
+        RBRaspberryRuntimeGuestEntryQueued) {
+        return;
+    }
+
+    RBRaspberryRuntimeGuestEntryQueued = YES;
+    uint64_t generation = RBRaspberryRuntimeGuestEntryGeneration;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation != RBRaspberryRuntimeGuestEntryGeneration) {
+            return;
+        }
+        RBRaspberryRuntimeGuestEntryQueued = NO;
+        if (!RBRaspberryRuntimePendingGuestEntry) {
+            return;
+        }
+
+        RBRaspberryRuntimeCreateGuestAccountFunction createGuestAccount =
+            RBRaspberryRuntimeCreateGuestAccountIfReady();
+        if (createGuestAccount == NULL) {
+            return;
+        }
+
+        // Consume this generation's pending entry before native code can reenter.
+        RBRaspberryRuntimePendingGuestEntry = NO;
+        createGuestAccount();
+    });
+}
+
+static void RBRaspberryRuntimeQueuePendingGuestEntryOnMain(void) {
+    if ([NSThread isMainThread]) {
+        RBRaspberryRuntimeQueuePendingGuestEntry();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            RBRaspberryRuntimeQueuePendingGuestEntry();
+        });
+    }
+}
+
 static void RBRaspberryRuntimeStopOverlayPollTimer(void) {
     if (RBRaspberryRuntimeOverlayPollTimer != nil) {
         [RBRaspberryRuntimeOverlayPollTimer invalidate];
@@ -703,6 +904,15 @@ static void RBRaspberryRuntimeInstallUIKitSignInGateOnMain(void) {
               credentialGate:RBRaspberryRuntimeGate
               bindingFactory:^id<RBAuthSignInAttemptBinding> _Nullable(
                                  id<RBAuthFlowCommitter> committer) {
+                  RBRaspberryRuntimeCommitterProxy *committerProxy =
+                      [[RBRaspberryRuntimeCommitterProxy alloc]
+                          initWithInnerCommitter:committer
+                              onAuthorizedCommit:^{
+                                  RBRaspberryRuntimeQueuePendingGuestEntryOnMain();
+                              }];
+                  if (committerProxy == nil) {
+                      return nil;
+                  }
                   RBASWebAuthenticationSessionDriver *driver =
                       [[RBASWebAuthenticationSessionDriver alloc] init];
                   return [[RBAuthUIKitLifecycleBinding alloc]
@@ -715,7 +925,7 @@ static void RBRaspberryRuntimeInstallUIKitSignInGateOnMain(void) {
                             }
                                   scheduler:nil
                                attemptClock:nil
-                                  committer:committer];
+                                  committer:committerProxy];
               }];
     }
     if (RBRaspberryRuntimeSessionController == nil) {
@@ -769,6 +979,81 @@ static void RBRaspberryRuntimeInstallUIKitSignInGateOnMain(void) {
         [[NSRunLoop mainRunLoop] addTimer:RBRaspberryRuntimeOverlayPollTimer
                                   forMode:NSRunLoopCommonModes];
     }
+}
+
+static void RBRaspberryRuntimeAdvanceGuestEntryGeneration(void) {
+    RBRaspberryRuntimeGuestEntryGeneration++;
+    if (RBRaspberryRuntimeGuestEntryGeneration == 0) {
+        RBRaspberryRuntimeGuestEntryGeneration = 1;
+    }
+    RBRaspberryRuntimePendingGuestEntry = NO;
+    RBRaspberryRuntimeGuestEntryQueued = NO;
+}
+
+static BOOL RBRaspberryRuntimeClearAuthorizationOnce(void) {
+    if (![NSThread isMainThread]) {
+        return NO;
+    }
+    if (RBRaspberryRuntimeSessionController != nil) {
+        return [RBRaspberryRuntimeSessionController
+            invalidateAuthorizationAndClearStore:YES];
+    }
+    if (RBRaspberryRuntimeGate != nil) {
+        NSError *error = nil;
+        BOOL cleared =
+            [RBRaspberryRuntimeGate invalidateInMemoryAndClearStore:YES
+                                                               error:&error];
+        return cleared && error == nil;
+    }
+    if (RBRaspberryRuntimeAuthStore != nil) {
+        NSError *error = nil;
+        BOOL cleared =
+            [RBRaspberryRuntimeAuthStore clearAuthorizationError:&error];
+        return cleared && error == nil;
+    }
+    return NO;
+}
+
+static void RBRaspberryRuntimeLogCleanupFailure(BOOL authorizationCleared,
+                                                 BOOL cookieCleared) {
+    if (!authorizationCleared || !cookieCleared) {
+        os_log_error(OS_LOG_DEFAULT,
+                     "Raspberry iOS re-auth cleanup failed (authorization=%{public}d, cookie=%{public}d)",
+                     authorizationCleared, cookieCleared);
+    }
+}
+
+static BOOL RBRaspberryTriggerReauth(BOOL showOverlayNow,
+                                    BOOL allowGuestResume,
+                                    BOOL preserveSceneReadyEntry) {
+    if (![NSThread isMainThread]) {
+        return NO;
+    }
+
+    RBRaspberryRuntimeAdvanceGuestEntryGeneration();
+    RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+    if (!preserveSceneReadyEntry) {
+        RBRaspberryRuntimeSceneReadyEntrySeen = NO;
+    }
+
+    // The session controller owns gate invalidation when present; otherwise
+    // clear through the gate/store exactly once, and always report failures.
+    BOOL authorizationCleared = RBRaspberryRuntimeClearAuthorizationOnce();
+    NSError *cookieError = nil;
+    BOOL cookieCleared =
+        RBRaspberryRuntimeAuthStore != nil &&
+        [RBRaspberryRuntimeAuthStore clearCachedCookieError:&cookieError] &&
+        cookieError == nil;
+    BOOL cleanupSucceeded = authorizationCleared && cookieCleared;
+    RBRaspberryRuntimeLogCleanupFailure(authorizationCleared, cookieCleared);
+
+    if (cleanupSucceeded && allowGuestResume) {
+        RBRaspberryRuntimePendingGuestEntry = YES;
+    }
+    if (showOverlayNow) {
+        RBRaspberryRuntimeInstallUIKitSignInGateOnMain();
+    }
+    return cleanupSucceeded;
 }
 
 typedef id _Nullable (*RBWKWebViewLoadRequestIMP)(
@@ -933,6 +1218,80 @@ static BOOL RBRaspberryRuntimeInstallWebURLSwizzles(void) {
     return installed;
 }
 
+static void RBRaspberryRuntimeOnLoginReadyMain(uint32_t source) {
+    if (![NSThread isMainThread]) {
+        return;
+    }
+
+    if (source == RB_IOS_LOGIN_READY_SOURCE_CHECK_SESSION_GDPR_BRANCH) {
+        if (!RBRaspberryRuntimeCheckSession404AwaitingReady) {
+            return;
+        }
+        // The source-1 callback is the consent-eligible checkSession branch.
+        // Consume its one-shot authorization before presenting sign-in; never
+        // auto-enter directly from this branch.
+        RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+        RBRaspberryRuntimeAdvanceGuestEntryGeneration();
+        RBRaspberryRuntimeSceneReadyEntrySeen = YES;
+        RBRaspberryRuntimePendingGuestEntry = YES;
+        RBRaspberryRuntimeInstallUIKitSignInGateOnMain();
+        return;
+    }
+    if (source != RB_IOS_LOGIN_READY_SOURCE_SET_END_LOADING) {
+        return;
+    }
+
+    // Source 0 is SetEndLoading's stock consent-eligible tail. It also
+    // consumes a pending 404 transition if that branch reaches this gate.
+    RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+    RBRaspberryRuntimeAdvanceGuestEntryGeneration();
+    RBRaspberryRuntimeSceneReadyEntrySeen = YES;
+    RBRaspberryRuntimePendingGuestEntry = YES;
+
+    RBAuthGuestCredentialGate *gate = RBRaspberryRuntimeGate;
+    if (gate != nil && gate.isAuthorized) {
+        RBRaspberryRuntimeQueuePendingGuestEntry();
+    } else {
+        RBRaspberryRuntimeInstallUIKitSignInGateOnMain();
+    }
+}
+
+static void RBRaspberryRuntimeOnSessionResetMain(void) {
+    if (![NSThread isMainThread]) {
+        return;
+    }
+    (void)RBRaspberryTriggerReauth(NO, NO, NO);
+}
+
+static void RBRaspberryRuntimeOnCheckSessionErrorMain(BOOL confirmed404) {
+    if (![NSThread isMainThread]) {
+        return;
+    }
+    if (!confirmed404) {
+        // A later non-404 error must not leave a stale 404 authorization for
+        // an unrelated source-1 layout callback.
+        RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+        return;
+    }
+
+    RBRaspberryRuntimeAdvanceGuestEntryGeneration();
+    RBRaspberryRuntimeSceneReadyEntrySeen = NO;
+    RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+
+    // Do not present the overlay or auto-enter here: the stock COPPA/GDPR
+    // branches must first reach source 0 or source 1.
+    BOOL authorizationCleared = RBRaspberryRuntimeClearAuthorizationOnce();
+    NSError *cookieError = nil;
+    BOOL cookieCleared =
+        RBRaspberryRuntimeAuthStore != nil &&
+        [RBRaspberryRuntimeAuthStore clearCachedCookieError:&cookieError] &&
+        cookieError == nil;
+    RBRaspberryRuntimeLogCleanupFailure(authorizationCleared, cookieCleared);
+    if (authorizationCleared && cookieCleared) {
+        RBRaspberryRuntimeCheckSession404AwaitingReady = YES;
+    }
+}
+
 static BOOL RBRaspberryRuntimeInitialize(void) {
     RBRaspberryRuntimeMainImage mainImage = {0};
     if (!RBRaspberryRuntimeFindUniqueMainImage(&mainImage)) {
@@ -980,6 +1339,10 @@ static BOOL RBRaspberryRuntimeInitialize(void) {
         UINTPTR_MAX - RBRaspberryRuntimeContinuationRVA) {
         return NO;
     }
+    if (!RBRaspberryRuntimeRVAIsExecutable(&mainImage,
+            RBRaspberryRuntimeCreateGuestAccountRVA, sizeof(uint32_t))) {
+        return NO;
+    }
 
     RBEndpoint *endpoint = RBRaspberryRuntimeLoadBundleEndpoint();
     const rb_socket_ops *ops = RBRaspberryRuntimeFallbackOps();
@@ -1000,13 +1363,17 @@ static BOOL RBRaspberryRuntimeInitialize(void) {
     NSURL *appSupportURL = [NSFileManager.defaultManager
         URLsForDirectory:NSApplicationSupportDirectory
                inDomains:NSUserDomainMask].firstObject;
-    NSURL *cachesURL = [NSFileManager.defaultManager
+    NSURL *rawCachesURL = [NSFileManager.defaultManager
         URLsForDirectory:NSCachesDirectory
                inDomains:NSUserDomainMask].firstObject;
-    RBAuthGuestCredentialGate *gate = RBRaspberryRuntimeInitializeGate(
-        endpoint, appSupportURL, cachesURL);
+    RBAuthStore *authStore =
+        RBRaspberryRuntimeInitializeStore(appSupportURL, rawCachesURL);
+    RBAuthGuestCredentialGate *gate =
+        RBRaspberryRuntimeInitializeGate(endpoint, authStore);
 
     RBRaspberryRuntimeMainImageInfo = mainImage;
+    RBRaspberryRuntimeMainImageSlide = mainImage.slide;
+    RBRaspberryRuntimeMainImageSlideValid = YES;
     RBRaspberryRuntimeNoticeCenterClass = noticeCenterClass;
     RBRaspberryRuntimeUserAgentSelector = userAgentSelector;
     RBRaspberryRuntimeUserAgentExpectedIMP = userAgentImplementation;
@@ -1016,8 +1383,14 @@ static BOOL RBRaspberryRuntimeInitialize(void) {
         (uintptr_t)mainImage.header + RBRaspberryRuntimeContinuationRVA;
     RBRaspberryRuntimeEndpoint = endpoint;
     RBRaspberryRuntimeGate = gate;
+    RBRaspberryRuntimeAuthStore = authStore;
     atomic_store_explicit(&RBRaspberryRuntimeAttemptedOnce, false,
                           memory_order_release);
+    RBRaspberryRuntimePendingGuestEntry = NO;
+    RBRaspberryRuntimeGuestEntryQueued = NO;
+    RBRaspberryRuntimeSceneReadyEntrySeen = NO;
+    RBRaspberryRuntimeCheckSession404AwaitingReady = NO;
+    RBRaspberryRuntimeGuestEntryGeneration = 1;
 
     if (!RBRaspberryRuntimeInstallWebURLSwizzles()) {
         rb_router_destroy(&RBRaspberryRuntimeSocketRouter);
@@ -1283,4 +1656,96 @@ const char * _Nullable rb_ios_guest_unique_code(
     return (hasEndpoint && gate != nil)
         ? [gate authorizedUniqueCodeUTF8]
         : NULL;
+}
+
+__attribute__((visibility("default"), used))
+void rb_ios_on_login_ready(uint32_t source) {
+    if (atomic_load_explicit(&RBRaspberryRuntimeReadiness,
+            memory_order_acquire) != 1U) {
+        __builtin_trap();
+    }
+    if ([NSThread isMainThread]) {
+        RBRaspberryRuntimeOnLoginReadyMain(source);
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            RBRaspberryRuntimeOnLoginReadyMain(source);
+        });
+    }
+}
+
+__attribute__((visibility("default"), used))
+void rb_ios_on_session_reset(void) {
+    if (atomic_load_explicit(&RBRaspberryRuntimeReadiness,
+            memory_order_acquire) != 1U) {
+        __builtin_trap();
+    }
+    if ([NSThread isMainThread]) {
+        RBRaspberryRuntimeOnSessionResetMain();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            RBRaspberryRuntimeOnSessionResetMain();
+        });
+    }
+}
+
+__attribute__((visibility("default"), used))
+void rb_ios_on_check_session_error(const void * _Nullable parsedHttpError) {
+    if (atomic_load_explicit(&RBRaspberryRuntimeReadiness,
+            memory_order_acquire) != 1U) {
+        __builtin_trap();
+    }
+    BOOL confirmed404 = NO;
+    if (parsedHttpError != NULL) {
+        const uint8_t *bytes = (const uint8_t *)parsedHttpError;
+        uint32_t flags = 0;
+        int32_t httpStatus = 0;
+        memcpy(&flags, bytes + 0x00u, sizeof(flags));
+        memcpy(&httpStatus, bytes + 0x0Cu, sizeof(httpStatus));
+        confirmed404 = flags == 0x18U && httpStatus == 404;
+    }
+
+    if ([NSThread isMainThread]) {
+        RBRaspberryRuntimeOnCheckSessionErrorMain(confirmed404);
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            RBRaspberryRuntimeOnCheckSessionErrorMain(confirmed404);
+        });
+    }
+}
+
+__attribute__((visibility("default"), used))
+int rb_ios_on_guest_generate_error(const void * _Nullable parsedHttpError) {
+    if (atomic_load_explicit(&RBRaspberryRuntimeReadiness,
+            memory_order_acquire) != 1U) {
+        __builtin_trap();
+    }
+    if (parsedHttpError == NULL) {
+        return 0;
+    }
+    if (![NSThread isMainThread]) {
+        return 0;
+    }
+
+    const uint8_t *bytes = (const uint8_t *)parsedHttpError;
+    uint32_t flags = 0;
+    int32_t httpStatus = 0;
+    int32_t errorCode = 0;
+    memcpy(&flags, bytes + 0x00u, sizeof(flags));
+    memcpy(&httpStatus, bytes + 0x0Cu, sizeof(httpStatus));
+    memcpy(&errorCode, bytes + 0x70u, sizeof(errorCode));
+
+    if (flags != 0x08U || httpStatus != 400 || errorCode != 400) {
+        return 0;
+    }
+
+    // Only replace the stock refusal UI when a consent-eligible source has
+    // already established that a fresh sign-in can resume guest entry.
+    if (!RBRaspberryRuntimeSceneReadyEntrySeen) {
+        return 0;
+    }
+
+    BOOL allowGuestResume = YES;
+    BOOL cleanupSucceeded =
+        RBRaspberryTriggerReauth(YES, allowGuestResume, allowGuestResume);
+    return cleanupSucceeded ? 1 : 0;
 }

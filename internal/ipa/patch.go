@@ -19,6 +19,10 @@ const (
 	ExportGethostbyname            = "rb_ios_gethostbyname"
 	ExportConnect                  = "rb_ios_connect"
 	ExportGuestUniqueCode          = "rb_ios_guest_unique_code"
+	ExportLoginReady               = "rb_ios_on_login_ready"
+	ExportSessionReset             = "rb_ios_on_session_reset"
+	ExportCheckSessionError        = "rb_ios_on_check_session_error"
+	ExportGuestGenerateError       = "rb_ios_on_guest_generate_error"
 )
 
 const (
@@ -41,8 +45,20 @@ const (
 	autoGuestEntryRVA         = uint64(0x53af68)
 	autoGuestEntryOrigTarget  = uint64(0x538db8)
 	autoGuestEntryOrigWord    = uint32(0x17fff794) // b 0x100538db8
-	createGuestAccountRVA     = uint64(0xbfe388)
-	autoGuestEntryPatchedWord = uint32(0x141b0d08) // b 0x100bfe388
+	autoGuestEntryPatchedWord = uint32(0x17eb21b6) // b loginReadyResolverRVA
+
+	legacyLoginVisibilityRVA      = uint64(0x538de4)
+	legacyLoginVisibilityOrigWord = uint32(0xaa0103f4) // mov x20, x1
+
+	gdprLoginReadyCallsiteRVA = uint64(0x53c434)
+	gdprLoginReadyOrigWord    = uint32(0x97fff261) // bl sub_100538DB8
+
+	sessionOutSuccessRVA       = uint64(0x6af020)
+	deleteDirectSuccessRVA     = uint64(0x6b39bc)
+	deleteSNSuccessRVA         = uint64(0xbdf494)
+	checkSessionErrorEntryRVA  = uint64(0x6ae0c8)
+	guestGenerateErrorTailRVA  = uint64(0x6b2a54)
+	guestGenerateDialogTailRVA = uint64(0x6b2a58)
 
 	guestGenerateRVA = uint64(0x6bdd4c)
 
@@ -64,9 +80,27 @@ const (
 	guestResolverRVA         = uint64(0x3500)
 	guestExportRVA           = uint64(0x3580)
 
-	noticeResolverWordCount = 16
-	stubResolverWordCount   = 15
-	guestResolverWordCount  = 18
+	legacyLoginResolverRVA    = uint64(0x3600)
+	loginReadyResolverRVA     = uint64(0x3640)
+	loginReadyExportRVA       = uint64(0x3680)
+	gdprLoginReadyResolverRVA = uint64(0x3b40)
+	sessionOutResolverRVA     = uint64(0x3700)
+	sessionResetExportRVA     = uint64(0x3780)
+	deleteDirectResolverRVA   = uint64(0x3800)
+	deleteSNSResolverRVA      = uint64(0x38c0)
+	checkSessionResolverRVA   = uint64(0x3980)
+	checkSessionExportRVA     = uint64(0x3a00)
+	guestGenerateResolverRVA  = uint64(0x3a40)
+	guestGenerateExportRVA    = uint64(0x3b00)
+
+	noticeResolverWordCount         = 16
+	stubResolverWordCount           = 15
+	guestResolverWordCount          = 18
+	loginReadyResolverWordCount     = 13
+	gdprLoginReadyResolverWordCount = 13
+	sessionResetResolverWordCount   = 21
+	checkSessionResolverWordCount   = 22
+	guestGenerateResolverWordCount  = 26
 
 	// Verified __TEXT,__stubs entries for socket/DNS interposition.
 	stubConnectRVA       = uint64(0x1ac149c)
@@ -180,6 +214,96 @@ var autoGuestGuardWindows = []guardWindowSpec{
 			0xf9453108, 0xf9400113, 0x9432430b, 0x9432495f,
 			0xaa0003e1, 0xaa1303e0, 0xa9417bfd, 0xa8c24ff4,
 			0x17eafe65,
+		},
+	},
+}
+
+type reauthGuardSpec struct {
+	name     string
+	start    uint64
+	patchRVA uint64
+	link     bool
+	words    []uint32
+}
+
+// These source words are from the hash-locked LINEPlay_Store image. Each
+// re-auth trampoline replaces only patchRVA; all other words remain stock.
+var reauthGuardWindows = []reauthGuardSpec{
+	{
+		name:     "legacy login visibility helper",
+		start:    0x538db8,
+		patchRVA: legacyLoginVisibilityRVA,
+		words: []uint32{
+			0xd10143ff, 0x6d0123e9, 0xa90257f6, 0xa9034ff4,
+			0xa9047bfd, 0x910103fd, 0xaa0003f3, 0xf940c400,
+			0xb40009e0, 0xf940ca68, 0xb40009a8, 0xaa0103f4,
+			0x7100003f, 0x1e2703e0, 0x1e2e1001, 0x1e201c28,
+		},
+	},
+	{
+		name:     "Logout sessionout success",
+		start:    0x6aeff8,
+		patchRVA: sessionOutSuccessRVA,
+		words: []uint32{
+			0xa9bf7bfd, 0x910003fd, 0xaa0303e0, 0x9000a6a1,
+			0x9105c421, 0x9448b69f, 0x9448b562, 0x34000080,
+			0x9407a8c6, 0xa8c17bfd, 0x1407af39, 0xa8c17bfd,
+			0xd65f03c0,
+		},
+	},
+	{
+		name:     "SNS Delete Avatar success",
+		start:    0xbdf478,
+		patchRVA: deleteSNSuccessRVA,
+		words: []uint32{
+			0xaa1303e0, 0x9433f583, 0x9433f446, 0x340000a0,
+			0x97f2e7aa, 0xa9417bfd, 0xa8c24ff4, 0x17f2ef6a,
+			0xa9417bfd, 0xa8c24ff4, 0xd65f03c0,
+		},
+	},
+	{
+		name:     "direct Delete Avatar success",
+		start:    0x6b398c,
+		patchRVA: deleteDirectSuccessRVA,
+		words: []uint32{
+			0xa9bf7bfd, 0x910003fd, 0xaa0303e0, 0x9000a681,
+			0x9105c421, 0x9448a43a, 0x9448a2fd, 0x340000c0,
+			0x940a2f61, 0x940a313d, 0x9407965f, 0xa8c17bfd,
+			0x14079cd2, 0xa8c17bfd, 0xd65f03c0,
+		},
+	},
+	{
+		name:     "checkSession failure entry",
+		start:    checkSessionErrorEntryRVA,
+		patchRVA: checkSessionErrorEntryRVA,
+		words: []uint32{
+			0xa9bd57f6, 0xa9014ff4, 0xa9027bfd, 0x910083fd,
+			0xaa0303f3, 0xaa0003f4, 0xd000b448, 0xf9438108,
+			0xf9400100, 0xb9402281, 0x94254876,
+		},
+	},
+	{
+		name:     "guest/generate failure handler",
+		start:    0x6b29e0,
+		patchRVA: guestGenerateErrorTailRVA,
+		words: []uint32{
+			0xa9be4ff4, 0xa9017bfd, 0x910043fd, 0xaa0303f3,
+			0xd000b428, 0xf9438108, 0xf9400108, 0xb9402001,
+			0xaa0803e0, 0x94253631, 0x52800028, 0x39030268,
+			0xaa1303e0, 0x97e7a1ed, 0xb9407268, 0x711f751f,
+			0x5284eba8, 0x52840da9, 0x1a880128, 0x7100001f,
+			0x5284f249, 0x1a881120, 0x52800021, 0xd2800002,
+			0x52800003, 0x12800004, 0x52800005, 0x52800006,
+			0x52800007, 0xa9417bfd, 0xa8c24ff4, 0x140f44bd,
+		},
+	},
+	{
+		name:     "case 10043 GDPR-ready branch",
+		start:    0x53c430,
+		patchRVA: gdprLoginReadyCallsiteRVA,
+		link:     true,
+		words: []uint32{
+			0x52800021, gdprLoginReadyOrigWord, 0xf940ce60, 0xf9400008,
 		},
 	},
 }
@@ -324,8 +448,8 @@ type patchImageSegment struct {
 
 // PatchMainExecutable verifies the locked LINEPlay_Store baseline in memory and
 // returns a new patched executable byte slice with the dylib loader, notice
-// callsite resolver, four socket/DNS stub routes, three guest-generate
-// callsites, and auto-guest-entry branch without touching disk.
+// resolver, socket/DNS and guest-auth routes, and session re-auth callsites.
+// It does not touch disk.
 func PatchMainExecutable(original []byte) ([]byte, error) {
 	if int64(len(original)) != MainSize {
 		return nil, fmt.Errorf("%w: size %d", ErrBaseline, len(original))
@@ -370,6 +494,9 @@ func validateBaselineImage(data []byte) error {
 		return err
 	}
 	if err := validateAutoGuestEntry(data); err != nil {
+		return err
+	}
+	if err := validateReauthTargets(data); err != nil {
 		return err
 	}
 	if !allZero(data[patchLoaderCommandOff:patchFirstTextSection]) {
@@ -470,13 +597,54 @@ func validateAutoGuestEntry(data []byte) error {
 	return nil
 }
 
+func validateReauthTargets(data []byte) error {
+	for _, guard := range reauthGuardWindows {
+		end := guard.start + uint64(len(guard.words))*4
+		if end < guard.start || end > uint64(len(data)) {
+			return fmt.Errorf("ipa: patch: %s guard window exceeds image bounds", guard.name)
+		}
+		if !bytes.Equal(data[guard.start:end], encodeWords(guard.words)) {
+			return fmt.Errorf("ipa: patch: %s guard mismatch", guard.name)
+		}
+		if guard.patchRVA < guard.start || guard.patchRVA+4 > end {
+			return fmt.Errorf("ipa: patch: %s patch target is outside its guard window", guard.name)
+		}
+	}
+	if got := binary.LittleEndian.Uint32(data[legacyLoginVisibilityRVA:]); got != legacyLoginVisibilityOrigWord {
+		return fmt.Errorf("ipa: patch: legacy login visibility word 0x%08x != expected 0x%08x",
+			got, legacyLoginVisibilityOrigWord)
+	}
+
+	type originalBranch struct {
+		name   string
+		rva    uint64
+		word   uint32
+		target uint64
+		link   bool
+	}
+	for _, branch := range []originalBranch{
+		{"Logout sessionout success", sessionOutSuccessRVA, 0x1407af39, 0x89ad04, false},
+		{"direct Delete Avatar success", deleteDirectSuccessRVA, 0x14079cd2, 0x89ad04, false},
+		{"SNS Delete Avatar success", deleteSNSuccessRVA, 0x17f2ef6a, 0x89b23c, false},
+		{"case 10043 GDPR-ready", gdprLoginReadyCallsiteRVA, gdprLoginReadyOrigWord, 0x538db8, true},
+	} {
+		got := binary.LittleEndian.Uint32(data[branch.rva:])
+		target, link, ok := decodeArm64Branch(got, branch.rva)
+		if got != branch.word || !ok || link != branch.link || target != branch.target {
+			return fmt.Errorf("ipa: patch: %s branch mismatch (word=0x%08x target=0x%x link=%t)",
+				branch.name, got, target, link)
+		}
+	}
+	return nil
+}
+
 func autoGuestEntryBranchWord() (uint32, error) {
-	word, err := encodeArm64Branch(autoGuestEntryRVA, createGuestAccountRVA, false)
+	word, err := encodeArm64Branch(autoGuestEntryRVA, loginReadyResolverRVA, false)
 	if err != nil {
 		return 0, fmt.Errorf("ipa: patch: auto-guest-entry branch: %w", err)
 	}
 	if word != autoGuestEntryPatchedWord {
-		return 0, fmt.Errorf("ipa: patch: auto-guest-entry branch word 0x%08x != expected 0x%08x", word, autoGuestEntryPatchedWord)
+		return 0, fmt.Errorf("ipa: patch: login-ready branch word 0x%08x != expected 0x%08x", word, autoGuestEntryPatchedWord)
 	}
 	return word, nil
 }
@@ -689,6 +857,9 @@ func emitAllPatches(prepared []byte) ([]byte, error) {
 	if err := validateAutoGuestEntry(prepared); err != nil {
 		return nil, err
 	}
+	if err := validateReauthTargets(prepared); err != nil {
+		return nil, err
+	}
 	if !allZero(prepared[patchLoaderHeaderEnd:patchFirstTextSection]) {
 		return nil, errors.New("ipa: patch: post-AddLoader RX gap is not zero")
 	}
@@ -756,6 +927,62 @@ func emitAllPatches(prepared []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	legacyWords, err := legacyLoginResolverWords()
+	if err != nil {
+		return nil, err
+	}
+	loginReadyWords, err := loginReadyResolverWords()
+	if err != nil {
+		return nil, err
+	}
+	gdprLoginReadyWords, err := gdprLoginReadyResolverWords()
+	if err != nil {
+		return nil, err
+	}
+	sessionOutWords, err := sessionResetResolverWords(sessionOutResolverRVA, sessionResetExportRVA, 0x89ad04)
+	if err != nil {
+		return nil, err
+	}
+	deleteDirectWords, err := sessionResetResolverWords(deleteDirectResolverRVA, sessionResetExportRVA, 0x89ad04)
+	if err != nil {
+		return nil, err
+	}
+	deleteSNSWords, err := sessionResetResolverWords(deleteSNSResolverRVA, sessionResetExportRVA, 0x89b23c)
+	if err != nil {
+		return nil, err
+	}
+	checkSessionWords, err := checkSessionErrorResolverWords()
+	if err != nil {
+		return nil, err
+	}
+	guestGenerateWords, err := guestGenerateErrorResolverWords()
+	if err != nil {
+		return nil, err
+	}
+
+	type resolverBranch struct {
+		rva    uint64
+		target uint64
+		name   string
+		link   bool
+	}
+	reauthBranches := []resolverBranch{
+		{legacyLoginVisibilityRVA, legacyLoginResolverRVA, "legacy login visibility", false},
+		{sessionOutSuccessRVA, sessionOutResolverRVA, "Logout session-reset", false},
+		{deleteDirectSuccessRVA, deleteDirectResolverRVA, "direct-delete session-reset", false},
+		{deleteSNSuccessRVA, deleteSNSResolverRVA, "SNS-delete session-reset", false},
+		{checkSessionErrorEntryRVA, checkSessionResolverRVA, "checkSession-error", false},
+		{guestGenerateErrorTailRVA, guestGenerateResolverRVA, "guest-generate-error", false},
+		{gdprLoginReadyCallsiteRVA, gdprLoginReadyResolverRVA, "case 10043 GDPR-ready login overlay", true},
+	}
+	reauthBranchWords := make([]uint32, len(reauthBranches))
+	for i, branch := range reauthBranches {
+		reauthBranchWords[i], err = encodeArm64Branch(branch.rva, branch.target, branch.link)
+		if err != nil {
+			return nil, fmt.Errorf("ipa: patch: %s branch: %w", branch.name, err)
+		}
+	}
+
 	out := append([]byte(nil), prepared...)
 	writeWords(out[noticeResolverRVA:], noticeWords)
 	copy(out[noticeExportRVA:], append([]byte(ExportNotice404DiagnosticEntry), 0))
@@ -773,6 +1000,22 @@ func emitAllPatches(prepared []byte) ([]byte, error) {
 		binary.LittleEndian.PutUint32(out[spec.callsiteRVA:], guestBranches[i])
 	}
 	binary.LittleEndian.PutUint32(out[autoGuestEntryRVA:], autoGuestBranch)
+
+	writeWords(out[legacyLoginResolverRVA:], legacyWords)
+	writeWords(out[loginReadyResolverRVA:], loginReadyWords)
+	writeWords(out[gdprLoginReadyResolverRVA:], gdprLoginReadyWords)
+	copy(out[loginReadyExportRVA:], append([]byte(ExportLoginReady), 0))
+	writeWords(out[sessionOutResolverRVA:], sessionOutWords)
+	copy(out[sessionResetExportRVA:], append([]byte(ExportSessionReset), 0))
+	writeWords(out[deleteDirectResolverRVA:], deleteDirectWords)
+	writeWords(out[deleteSNSResolverRVA:], deleteSNSWords)
+	writeWords(out[checkSessionResolverRVA:], checkSessionWords)
+	copy(out[checkSessionExportRVA:], append([]byte(ExportCheckSessionError), 0))
+	writeWords(out[guestGenerateResolverRVA:], guestGenerateWords)
+	copy(out[guestGenerateExportRVA:], append([]byte(ExportGuestGenerateError), 0))
+	for i, branch := range reauthBranches {
+		binary.LittleEndian.PutUint32(out[branch.rva:], reauthBranchWords[i])
+	}
 
 	if err := verifyPatchOnlyDelta(prepared, out); err != nil {
 		return nil, err
@@ -862,7 +1105,7 @@ func verifyDecodedInstructions(before, after []byte) error {
 		return fmt.Errorf("ipa: patch: post-patch auto-guest-entry word 0x%08x != expected 0x%08x", gotAutoGuest, autoGuestEntryPatchedWord)
 	}
 	target, link, ok = decodeArm64Branch(gotAutoGuest, autoGuestEntryRVA)
-	if !ok || link || target != createGuestAccountRVA {
+	if !ok || link || target != loginReadyResolverRVA {
 		return fmt.Errorf("ipa: patch: post-patch auto-guest-entry branch target 0x%x (link=%t, ok=%t)", target, link, ok)
 	}
 	for _, w := range autoGuestGuardWindows {
@@ -877,6 +1120,191 @@ func verifyDecodedInstructions(before, after []byte) error {
 			!bytes.Equal(before[w.start:w.unchanged], after[w.start:w.unchanged]) {
 			return fmt.Errorf("ipa: patch: post-patch %s guard mutated", w.name)
 		}
+	}
+	if err := verifyReauthInstructions(before, after); err != nil {
+		return err
+	}
+	return nil
+}
+
+func verifyReauthInstructions(before, after []byte) error {
+	if err := validateReauthTargets(before); err != nil {
+		return fmt.Errorf("ipa: patch: original re-auth guard: %w", err)
+	}
+
+	branchTargets := map[uint64]uint64{
+		legacyLoginVisibilityRVA:  legacyLoginResolverRVA,
+		sessionOutSuccessRVA:      sessionOutResolverRVA,
+		deleteDirectSuccessRVA:    deleteDirectResolverRVA,
+		deleteSNSuccessRVA:        deleteSNSResolverRVA,
+		checkSessionErrorEntryRVA: checkSessionResolverRVA,
+		guestGenerateErrorTailRVA: guestGenerateResolverRVA,
+		gdprLoginReadyCallsiteRVA: gdprLoginReadyResolverRVA,
+	}
+	for _, guard := range reauthGuardWindows {
+		end := guard.start + uint64(len(guard.words))*4
+		for off := guard.start; off < end; off++ {
+			if off >= guard.patchRVA && off < guard.patchRVA+4 {
+				continue
+			}
+			if before[off] != after[off] {
+				return fmt.Errorf("ipa: patch: %s non-target byte at 0x%x changed", guard.name, off)
+			}
+		}
+		target := branchTargets[guard.patchRVA]
+		got := binary.LittleEndian.Uint32(after[guard.patchRVA:])
+		decoded, link, ok := decodeArm64Branch(got, guard.patchRVA)
+		if !ok || link != guard.link || decoded != target {
+			return fmt.Errorf("ipa: patch: %s branch target 0x%x (link=%t), want 0x%x (link=%t)",
+				guard.name, decoded, link, target, guard.link)
+		}
+	}
+
+	legacyWords, err := legacyLoginResolverWords()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(after[legacyLoginResolverRVA:legacyLoginResolverRVA+uint64(len(legacyWords))*4], encodeWords(legacyWords)) {
+		return errors.New("ipa: patch: legacy login visibility resolver bytes mismatch")
+	}
+	if target, link, ok := decodeArm64Branch(legacyWords[2], legacyLoginResolverRVA+8); !ok || link || target != legacyLoginVisibilityRVA+4 {
+		return fmt.Errorf("ipa: patch: legacy login visibility continuation target 0x%x", target)
+	}
+
+	loginWords, err := loginReadyResolverWords()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(after[loginReadyResolverRVA:loginReadyResolverRVA+uint64(len(loginWords))*4], encodeWords(loginWords)) {
+		return errors.New("ipa: patch: login-ready resolver bytes mismatch")
+	}
+	if err := verifyResolverDlsymPrefix(after, "login-ready", loginReadyResolverRVA,
+		loginReadyExportRVA, ExportLoginReady, 3, 4, 6, 16, loginReadyResolverRVA+8*4); err != nil {
+		return err
+	}
+	if got := binary.LittleEndian.Uint32(after[loginReadyResolverRVA+8*4:]); got != 0xd2800000 {
+		return fmt.Errorf("ipa: patch: SetEndLoading login-ready source mode instruction 0x%08x != mov x0, #0", got)
+	}
+	gdprLoginWords, err := gdprLoginReadyResolverWords()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(after[gdprLoginReadyResolverRVA:gdprLoginReadyResolverRVA+uint64(len(gdprLoginWords))*4], encodeWords(gdprLoginWords)) {
+		return errors.New("ipa: patch: case 10043 GDPR-ready resolver bytes mismatch")
+	}
+	if err := verifyResolverDlsymPrefix(after, "case 10043 GDPR-ready login-ready", gdprLoginReadyResolverRVA,
+		loginReadyExportRVA, ExportLoginReady, 3, 4, 6, 16, gdprLoginReadyResolverRVA+8*4); err != nil {
+		return err
+	}
+	gdprCallbackModeWord := binary.LittleEndian.Uint32(after[gdprLoginReadyResolverRVA+8*4:])
+	if gdprCallbackModeWord != 0x52800020 {
+		return fmt.Errorf("ipa: patch: case 10043 login-ready source mode instruction 0x%08x != mov w0, #1", gdprCallbackModeWord)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		resolver   uint64
+		target     uint64
+		exportName string
+	}{
+		{"Logout session-reset", sessionOutResolverRVA, 0x89ad04, ExportSessionReset},
+		{"direct-delete session-reset", deleteDirectResolverRVA, 0x89ad04, ExportSessionReset},
+		{"SNS-delete session-reset", deleteSNSResolverRVA, 0x89b23c, ExportSessionReset},
+	} {
+		words, err := sessionResetResolverWords(tc.resolver, sessionResetExportRVA, tc.target)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(after[tc.resolver:tc.resolver+uint64(len(words))*4], encodeWords(words)) {
+			return fmt.Errorf("ipa: patch: %s resolver bytes mismatch", tc.name)
+		}
+		if err := verifyResolverDlsymPrefix(after, tc.name, tc.resolver,
+			sessionResetExportRVA, tc.exportName, 7, 8, 10, 16, tc.resolver+12*4); err != nil {
+			return err
+		}
+		stockPC := tc.resolver + 20*4
+		if got, link, ok := decodeArm64Branch(binary.LittleEndian.Uint32(after[stockPC:]), stockPC); !ok || link || got != tc.target {
+			return fmt.Errorf("ipa: patch: %s stock continuation target 0x%x", tc.name, got)
+		}
+	}
+
+	checkWords, err := checkSessionErrorResolverWords()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(after[checkSessionResolverRVA:checkSessionResolverRVA+uint64(len(checkWords))*4], encodeWords(checkWords)) {
+		return errors.New("ipa: patch: checkSession-error resolver bytes mismatch")
+	}
+	checkErrorArgWord := binary.LittleEndian.Uint32(after[checkSessionResolverRVA+12*4:])
+	checkErrorRT, checkErrorRN, checkErrorOffset, checkErrorArgOK := decodeArm64LDR64Unsigned(checkErrorArgWord)
+	if !checkErrorArgOK || checkErrorRT != 0 || checkErrorRN != 31 || checkErrorOffset != 24 {
+		return fmt.Errorf("ipa: patch: checkSession-error argument instruction 0x%08x decodes (rt=%d rn=%d offset=%d ok=%t), want LDR X0, [SP,#24]",
+			checkErrorArgWord, checkErrorRT, checkErrorRN, checkErrorOffset, checkErrorArgOK)
+	}
+	if err := verifyResolverDlsymPrefix(after, "checkSession-error", checkSessionResolverRVA,
+		checkSessionExportRVA, ExportCheckSessionError, 7, 8, 10, 16, checkSessionResolverRVA+12*4); err != nil {
+		return err
+	}
+	checkContinuePC := checkSessionResolverRVA + 21*4
+	if got, link, ok := decodeArm64Branch(binary.LittleEndian.Uint32(after[checkContinuePC:]), checkContinuePC); !ok || link || got != checkSessionErrorEntryRVA+4 {
+		return fmt.Errorf("ipa: patch: checkSession-error original continuation target 0x%x", got)
+	}
+
+	guestWords, err := guestGenerateErrorResolverWords()
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(after[guestGenerateResolverRVA:guestGenerateResolverRVA+uint64(len(guestWords))*4], encodeWords(guestWords)) {
+		return errors.New("ipa: patch: guest-generate-error resolver bytes mismatch")
+	}
+	if err := verifyResolverDlsymPrefix(after, "guest-generate-error", guestGenerateResolverRVA,
+		guestGenerateExportRVA, ExportGuestGenerateError, 7, 8, 10, 16, guestGenerateResolverRVA+12*4); err != nil {
+		return err
+	}
+	handledPC := guestGenerateResolverRVA + 22*4
+	handledTarget, handledReg, ok := decodeArm64ZeroBranch(
+		binary.LittleEndian.Uint32(after[handledPC:]), handledPC, 0x35000000)
+	if !ok || handledReg != 9 || handledTarget != guestGenerateResolverRVA+24*4 {
+		return fmt.Errorf("ipa: patch: guest-generate handled CBNZ target 0x%x rt=%d", handledTarget, handledReg)
+	}
+	stockPC := guestGenerateResolverRVA + 23*4
+	if got, link, ok := decodeArm64Branch(binary.LittleEndian.Uint32(after[stockPC:]), stockPC); !ok || link || got != guestGenerateDialogTailRVA {
+		return fmt.Errorf("ipa: patch: guest-generate stock dialog continuation target 0x%x", got)
+	}
+	if got := binary.LittleEndian.Uint32(after[guestGenerateResolverRVA+24*4:]); got != 0xa8c24ff4 ||
+		binary.LittleEndian.Uint32(after[guestGenerateResolverRVA+25*4:]) != 0xd65f03c0 {
+		return fmt.Errorf("ipa: patch: guest-generate handled-return epilogue mismatch (0x%08x)", got)
+	}
+	for _, tc := range []struct {
+		name         string
+		resolverRVA  uint64
+		restoreIndex int
+	}{
+		{"Logout session-reset", sessionOutResolverRVA, 18},
+		{"direct-delete session-reset", deleteDirectResolverRVA, 18},
+		{"SNS-delete session-reset", deleteSNSResolverRVA, 18},
+		{"checkSession-error", checkSessionResolverRVA, 18},
+		{"guest-generate-error", guestGenerateResolverRVA, 19},
+	} {
+		if err := verifyResolverSavedLRPair(after, tc.name, tc.resolverRVA, 5, tc.restoreIndex); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyResolverSavedLRPair(data []byte, name string, resolverRVA uint64, saveIndex, restoreIndex int) error {
+	store := binary.LittleEndian.Uint32(data[resolverRVA+uint64(saveIndex*4):])
+	storeLoad, storeRT, storeRT2, storeRN, storeOffset, storeOK := decodeArm64Pair64Offset(store)
+	if !storeOK || storeLoad || storeRT != 8 || storeRT2 != 30 || storeRN != 31 || storeOffset != 64 {
+		return fmt.Errorf("ipa: patch: %s LR save fields=(load=%t Rt=%d Rt2=%d Rn=%d offset=%d ok=%t), want STP X8,X30,[SP,#64]",
+			name, storeLoad, storeRT, storeRT2, storeRN, storeOffset, storeOK)
+	}
+	load := binary.LittleEndian.Uint32(data[resolverRVA+uint64(restoreIndex*4):])
+	loadLoad, loadRT, loadRT2, loadRN, loadOffset, loadOK := decodeArm64Pair64Offset(load)
+	if !loadOK || !loadLoad || loadRT != 8 || loadRT2 != 30 || loadRN != 31 || loadOffset != 64 {
+		return fmt.Errorf("ipa: patch: %s LR restore fields=(load=%t Rt=%d Rt2=%d Rn=%d offset=%d ok=%t), want LDP X8,X30,[SP,#64]",
+			name, loadLoad, loadRT, loadRT2, loadRN, loadOffset, loadOK)
 	}
 	return nil
 }
@@ -1087,6 +1515,218 @@ func guestResolverWords() ([]uint32, error) {
 	return words, nil
 }
 
+func legacyLoginResolverWords() ([]uint32, error) {
+	continueBranch, err := encodeArm64Branch(legacyLoginResolverRVA+8, legacyLoginVisibilityRVA+4, false)
+	if err != nil {
+		return nil, fmt.Errorf("ipa: patch: legacy-login continuation branch: %w", err)
+	}
+	return []uint32{
+		0xaa1f03f4, // mov x20, xzr (saved visibility state remains hidden)
+		0x2a1f03e1, // mov w1, wzr (alpha/state input remains hidden)
+		continueBranch,
+	}, nil
+}
+
+func loginReadyResolverWords() ([]uint32, error) {
+	return loginReadyResolverWordsForSource(loginReadyResolverRVA, 0, false)
+}
+
+func gdprLoginReadyResolverWords() ([]uint32, error) {
+	return loginReadyResolverWordsForSource(gdprLoginReadyResolverRVA, 1, true)
+}
+
+func loginReadyResolverWordsForSource(resolverRVA uint64, source uint32, use32BitArgument bool) ([]uint32, error) {
+	if source > 0xffff {
+		return nil, errors.New("ipa: patch: login-ready source does not fit MOVZ")
+	}
+	adrName, err := encodeArm64ADR(resolverRVA+3*4, loginReadyExportRVA, 1)
+	if err != nil {
+		return nil, err
+	}
+	callDlsym, err := encodeArm64Branch(resolverRVA+4*4, patchDlsymStubRVA, true)
+	if err != nil {
+		return nil, err
+	}
+	cbnzReady, err := encodeArm64CBNZ(resolverRVA+6*4, resolverRVA+8*4, 16)
+	if err != nil {
+		return nil, err
+	}
+	sourceMode := uint32(0xd2800000)
+	if use32BitArgument {
+		sourceMode = 0x52800000
+	}
+	sourceMode |= source << 5
+	words := []uint32{
+		0xd10043ff, // sub sp, sp, #16
+		0xf90003fe, // str x30, [sp]
+		0x92800020, // movn x0, #1 (RTLD_DEFAULT = (void *)-2)
+		adrName,    // adr x1, rb_ios_on_login_ready
+		callDlsym,  // bl _dlsym
+		0xaa0003f0, // mov x16, x0
+		cbnzReady,  // cbnz x16, call
+		0xd4200000, // brk #0
+		sourceMode, // mov x0/w0, #source
+		0xd63f0200, // blr x16
+		0xf94003fe, // ldr x30, [sp]
+		0x910043ff, // add sp, sp, #16
+		0xd65f03c0, // ret
+	}
+	if len(words) != loginReadyResolverWordCount || resolverRVA == gdprLoginReadyResolverRVA && len(words) != gdprLoginReadyResolverWordCount {
+		return nil, errors.New("ipa: patch: internal login-ready resolver count mismatch")
+	}
+	return words, nil
+}
+
+func sessionResetResolverWords(resolverRVA, exportRVA, stockTarget uint64) ([]uint32, error) {
+	adrName, err := encodeArm64ADR(resolverRVA+7*4, exportRVA, 1)
+	if err != nil {
+		return nil, err
+	}
+	callDlsym, err := encodeArm64Branch(resolverRVA+8*4, patchDlsymStubRVA, true)
+	if err != nil {
+		return nil, err
+	}
+	cbnzReady, err := encodeArm64CBNZ(resolverRVA+10*4, resolverRVA+12*4, 16)
+	if err != nil {
+		return nil, err
+	}
+	tailBranch, err := encodeArm64Branch(resolverRVA+20*4, stockTarget, false)
+	if err != nil {
+		return nil, err
+	}
+	words := []uint32{
+		0xd10143ff, // sub sp, sp, #80
+		0xa90007e0, // stp x0, x1, [sp]
+		0xa9010fe2, // stp x2, x3, [sp, #16]
+		0xa90217e4, // stp x4, x5, [sp, #32]
+		0xa9031fe6, // stp x6, x7, [sp, #48]
+		0xa9047be8, // stp x8, x30, [sp, #64]
+		0x92800020, // movn x0, #1 (RTLD_DEFAULT = (void *)-2)
+		adrName,    // adr x1, rb_ios_on_session_reset
+		callDlsym,  // bl _dlsym
+		0xaa0003f0, // mov x16, x0
+		cbnzReady,  // cbnz x16, call
+		0xd4200000, // brk #0
+		0xd2800000, // mov x0, #0
+		0xd63f0200, // blr x16
+		0xa94007e0, // ldp x0, x1, [sp]
+		0xa9410fe2, // ldp x2, x3, [sp, #16]
+		0xa94217e4, // ldp x4, x5, [sp, #32]
+		0xa9431fe6, // ldp x6, x7, [sp, #48]
+		0xa9447be8, // ldp x8, x30, [sp, #64]
+		0x910143ff, // add sp, sp, #80
+		tailBranch, // b stock success continuation
+	}
+	if len(words) != sessionResetResolverWordCount {
+		return nil, errors.New("ipa: patch: internal session-reset resolver count mismatch")
+	}
+	return words, nil
+}
+
+func checkSessionErrorResolverWords() ([]uint32, error) {
+	adrName, err := encodeArm64ADR(checkSessionResolverRVA+7*4, checkSessionExportRVA, 1)
+	if err != nil {
+		return nil, err
+	}
+	callDlsym, err := encodeArm64Branch(checkSessionResolverRVA+8*4, patchDlsymStubRVA, true)
+	if err != nil {
+		return nil, err
+	}
+	cbnzReady, err := encodeArm64CBNZ(checkSessionResolverRVA+10*4, checkSessionResolverRVA+12*4, 16)
+	if err != nil {
+		return nil, err
+	}
+	continueBranch, err := encodeArm64Branch(checkSessionResolverRVA+21*4, checkSessionErrorEntryRVA+4, false)
+	if err != nil {
+		return nil, err
+	}
+	words := []uint32{
+		0xd10143ff, // sub sp, sp, #80
+		0xa90007e0, // stp x0, x1, [sp]
+		0xa9010fe2, // stp x2, x3, [sp, #16]
+		0xa90217e4, // stp x4, x5, [sp, #32]
+		0xa9031fe6, // stp x6, x7, [sp, #48]
+		0xa9047be8, // stp x8, x30, [sp, #64]
+		0x92800020, // movn x0, #1 (RTLD_DEFAULT = (void *)-2)
+		adrName,    // adr x1, rb_ios_on_check_session_error
+		callDlsym,  // bl _dlsym
+		0xaa0003f0, // mov x16, x0
+		cbnzReady,  // cbnz x16, call
+		0xd4200000, // brk #0
+		0xf9400fe0, // ldr x0, [sp, #24] (saved ParsedHttpError* from entry x3)
+		0xd63f0200, // blr x16
+		0xa94007e0, // ldp x0, x1, [sp]
+		0xa9410fe2, // ldp x2, x3, [sp, #16]
+		0xa94217e4, // ldp x4, x5, [sp, #32]
+		0xa9431fe6, // ldp x6, x7, [sp, #48]
+		0xa9447be8, // ldp x8, x30, [sp, #64]
+		0x910143ff, // add sp, sp, #80
+		0xa9bd57f6, // original STP x22, x21, [sp, #-0x30]!
+		continueBranch,
+	}
+	if len(words) != checkSessionResolverWordCount {
+		return nil, errors.New("ipa: patch: internal checkSession resolver count mismatch")
+	}
+	return words, nil
+}
+
+func guestGenerateErrorResolverWords() ([]uint32, error) {
+	adrName, err := encodeArm64ADR(guestGenerateResolverRVA+7*4, guestGenerateExportRVA, 1)
+	if err != nil {
+		return nil, err
+	}
+	callDlsym, err := encodeArm64Branch(guestGenerateResolverRVA+8*4, patchDlsymStubRVA, true)
+	if err != nil {
+		return nil, err
+	}
+	cbnzReady, err := encodeArm64CBNZ(guestGenerateResolverRVA+10*4, guestGenerateResolverRVA+12*4, 16)
+	if err != nil {
+		return nil, err
+	}
+	cbnzHandled, err := encodeArm64ZeroBranch(
+		guestGenerateResolverRVA+22*4, guestGenerateResolverRVA+24*4, 9, 0x35000000)
+	if err != nil {
+		return nil, err
+	}
+	stockContinue, err := encodeArm64Branch(
+		guestGenerateResolverRVA+23*4, guestGenerateDialogTailRVA, false)
+	if err != nil {
+		return nil, err
+	}
+	words := []uint32{
+		0xd10143ff,    // sub sp, sp, #80
+		0xa90007e0,    // stp x0, x1, [sp]
+		0xa9010fe2,    // stp x2, x3, [sp, #16]
+		0xa90217e4,    // stp x4, x5, [sp, #32]
+		0xa9031fe6,    // stp x6, x7, [sp, #48]
+		0xa9047be8,    // stp x8, x30, [sp, #64]
+		0x92800020,    // movn x0, #1 (RTLD_DEFAULT = (void *)-2)
+		adrName,       // adr x1, rb_ios_on_guest_generate_error
+		callDlsym,     // bl _dlsym
+		0xaa0003f0,    // mov x16, x0
+		cbnzReady,     // cbnz x16, call
+		0xd4200000,    // brk #0
+		0xaa1303e0,    // mov x0, x19 (ParsedHttpError *)
+		0xd63f0200,    // blr x16
+		0x2a0003e9,    // mov w9, w0 (handled result)
+		0xa94007e0,    // ldp x0, x1, [sp]
+		0xa9410fe2,    // ldp x2, x3, [sp, #16]
+		0xa94217e4,    // ldp x4, x5, [sp, #32]
+		0xa9431fe6,    // ldp x6, x7, [sp, #48]
+		0xa9447be8,    // ldp x8, x30, [sp, #64]
+		0x910143ff,    // add sp, sp, #80
+		0xa9417bfd,    // original LDP x29, x30, [sp, #16]
+		cbnzHandled,   // cbnz w9, handled return
+		stockContinue, // b to original remaining epilogue/dialog tail
+		0xa8c24ff4,    // original LDP x20, x19, [sp], #0x20
+		0xd65f03c0,    // ret: stock spinner/handled byte are already preserved
+	}
+	if len(words) != guestGenerateResolverWordCount {
+		return nil, errors.New("ipa: patch: internal guest-generate-error resolver count mismatch")
+	}
+	return words, nil
+}
+
 func reservedRanges() ([]byteRange, error) {
 	ranges := []byteRange{
 		{noticeResolverRVA, noticeResolverRVA + noticeResolverWordCount*4, "notice resolver"},
@@ -1101,6 +1741,18 @@ func reservedRanges() ([]byteRange, error) {
 	ranges = append(ranges,
 		byteRange{guestResolverRVA, guestResolverRVA + guestResolverWordCount*4, "guest auth resolver"},
 		byteRange{guestExportRVA, guestExportRVA + uint64(len(ExportGuestUniqueCode)) + 1, "guest auth export"},
+		byteRange{legacyLoginResolverRVA, legacyLoginResolverRVA + 3*4, "legacy login visibility resolver"},
+		byteRange{loginReadyResolverRVA, loginReadyResolverRVA + loginReadyResolverWordCount*4, "login-ready resolver"},
+		byteRange{loginReadyExportRVA, loginReadyExportRVA + uint64(len(ExportLoginReady)) + 1, "login-ready export"},
+		byteRange{gdprLoginReadyResolverRVA, gdprLoginReadyResolverRVA + gdprLoginReadyResolverWordCount*4, "case 10043 GDPR-ready login-ready resolver"},
+		byteRange{sessionOutResolverRVA, sessionOutResolverRVA + sessionResetResolverWordCount*4, "Logout session-reset resolver"},
+		byteRange{sessionResetExportRVA, sessionResetExportRVA + uint64(len(ExportSessionReset)) + 1, "session-reset export"},
+		byteRange{deleteDirectResolverRVA, deleteDirectResolverRVA + sessionResetResolverWordCount*4, "direct-delete session-reset resolver"},
+		byteRange{deleteSNSResolverRVA, deleteSNSResolverRVA + sessionResetResolverWordCount*4, "SNS-delete session-reset resolver"},
+		byteRange{checkSessionResolverRVA, checkSessionResolverRVA + checkSessionResolverWordCount*4, "checkSession-error resolver"},
+		byteRange{checkSessionExportRVA, checkSessionExportRVA + uint64(len(ExportCheckSessionError)) + 1, "checkSession-error export"},
+		byteRange{guestGenerateResolverRVA, guestGenerateResolverRVA + guestGenerateResolverWordCount*4, "guest-generate-error resolver"},
+		byteRange{guestGenerateExportRVA, guestGenerateExportRVA + uint64(len(ExportGuestGenerateError)) + 1, "guest-generate-error export"},
 	)
 	return ranges, nil
 }
@@ -1127,6 +1779,13 @@ func patchCallsiteRanges() []byteRange {
 	ranges := []byteRange{
 		{noticeCallsiteRVA, noticeCallsiteRVA + 4, "notice callsite BL"},
 		{autoGuestEntryRVA, autoGuestEntryRVA + 4, "auto-guest-entry SetEndLoading tail B"},
+		{legacyLoginVisibilityRVA, legacyLoginVisibilityRVA + 4, "legacy login visibility helper"},
+		{sessionOutSuccessRVA, sessionOutSuccessRVA + 4, "Logout sessionout success tail"},
+		{deleteDirectSuccessRVA, deleteDirectSuccessRVA + 4, "direct Delete Avatar success tail"},
+		{deleteSNSuccessRVA, deleteSNSuccessRVA + 4, "SNS Delete Avatar success tail"},
+		{checkSessionErrorEntryRVA, checkSessionErrorEntryRVA + 4, "checkSession error entry"},
+		{guestGenerateErrorTailRVA, guestGenerateErrorTailRVA + 4, "guest/generate error dialog tail"},
+		{gdprLoginReadyCallsiteRVA, gdprLoginReadyCallsiteRVA + 4, "case 10043 GDPR-ready login-ready BL"},
 	}
 	for _, spec := range socketStubSpecs {
 		ranges = append(ranges, byteRange{spec.stubRVA, spec.stubRVA + 4, spec.name + " stub B"})
@@ -1460,6 +2119,18 @@ func decodeArm64LDR64Unsigned(word uint32) (rt, rn uint32, offset uint64, ok boo
 	rn = (word >> 5) & 0x1f
 	imm12 := uint64((word >> 10) & 0xfff)
 	return rt, rn, imm12 << 3, true
+}
+
+func decodeArm64Pair64Offset(word uint32) (load bool, rt, rt2, rn uint32, offset int64, ok bool) {
+	op := word & 0xffc00000
+	if op != 0xa9000000 && op != 0xa9400000 {
+		return false, 0, 0, 0, 0, false
+	}
+	imm7 := int64((word >> 15) & 0x7f)
+	if imm7&(1<<6) != 0 {
+		imm7 |= ^int64(0x7f)
+	}
+	return op == 0xa9400000, word & 0x1f, (word >> 10) & 0x1f, (word >> 5) & 0x1f, imm7 * 8, true
 }
 
 func encodeArm64ZeroBranch(pc, target uint64, rt uint32, opcode uint32) (uint32, error) {

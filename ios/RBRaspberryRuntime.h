@@ -44,6 +44,25 @@ const char * _Nullable rb_ios_guest_unique_code(
     void * _Nullable invoker,
     const char * _Nullable stockUniqueCode);
 
+enum {
+    RB_IOS_LOGIN_READY_SOURCE_SET_END_LOADING = 0,
+    RB_IOS_LOGIN_READY_SOURCE_CHECK_SESSION_GDPR_BRANCH = 1,
+};
+
+/// Reports a stock consent-eligible gate; source 1 is consumed only after a
+/// confirmed checkSession 404 and the stock COPPA/GDPR checks.
+__attribute__((visibility("default"), used))
+void rb_ios_on_login_ready(uint32_t source);
+
+__attribute__((visibility("default"), used))
+void rb_ios_on_session_reset(void);
+
+__attribute__((visibility("default"), used))
+void rb_ios_on_check_session_error(const void * _Nullable parsedHttpError);
+
+__attribute__((visibility("default"), used))
+int rb_ios_on_guest_generate_error(const void * _Nullable parsedHttpError);
+
 NS_ASSUME_NONNULL_END
 
 #endif

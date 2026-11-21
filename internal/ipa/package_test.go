@@ -17,7 +17,7 @@ import (
 	"github.com/festivities/raspberry/internal/descriptor"
 )
 
-func allSixExports(baseAddr uint64) []syntheticExport {
+func allRequiredExports(baseAddr uint64) []syntheticExport {
 	exports := make([]syntheticExport, len(RequiredExports))
 	for i, name := range RequiredExports {
 		exports[i] = syntheticExport{
@@ -331,7 +331,7 @@ func TestWritePackageAtomicCreatesPrivateFileAndRefusesOverwriteAndSymlink(t *te
 }
 
 func TestBuildPackageRequiresLockedBaselineAndValidDylib(t *testing.T) {
-	dylib := syntheticGuestAuthDylib(RequiredDylibID, allSixExports(0x200), 5)
+	dylib := syntheticGuestAuthDylib(RequiredDylibID, allRequiredExports(0x200), 5)
 	endpointRaw := []byte(`{"v":1,"host":"cherry.example.org"}`)
 
 	if _, err := BuildPackage([]byte("not the locked IPA"), dylib, endpointRaw); err == nil {
@@ -358,11 +358,11 @@ func TestBuildPackageRequiresLockedBaselineAndValidDylib(t *testing.T) {
 	}
 }
 
-func TestDylibMetadataAndAllSixExportsValidation(t *testing.T) {
+func TestDylibMetadataAndAllTenExportsValidation(t *testing.T) {
 	if RequiredDylibID != "@rpath/libraspberry.dylib" {
 		t.Fatalf("RequiredDylibID=%q, want @rpath/libraspberry.dylib", RequiredDylibID)
 	}
-	exports := allSixExports(0x200)
+	exports := allRequiredExports(0x200)
 	data := syntheticGuestAuthDylib(RequiredDylibID, exports, 5)
 	expected := hashHex(data)
 
@@ -385,7 +385,7 @@ func TestDylibMetadataAndAllSixExportsValidation(t *testing.T) {
 		t.Fatal("writable-executable text segment accepted")
 	}
 
-	// Verify removing ANY ONE of the 6 required exports causes refusal.
+	// Verify removing ANY ONE of the 10 required exports causes refusal.
 	for omitIdx, omitted := range RequiredExports {
 		t.Run("missing_"+omitted, func(t *testing.T) {
 			var subset []syntheticExport
@@ -407,7 +407,7 @@ func TestDylibMetadataAndAllSixExportsValidation(t *testing.T) {
 		})
 	}
 
-	// Verify making ANY ONE of the 6 required exports a re-export (flags != 0) causes refusal.
+	// Verify making ANY ONE of the 10 required exports a re-export (flags != 0) causes refusal.
 	for reexpIdx, name := range RequiredExports {
 		t.Run("reexport_"+name, func(t *testing.T) {
 			modified := append([]syntheticExport(nil), exports...)
@@ -428,8 +428,8 @@ func TestDylibMetadataAndAllSixExportsValidation(t *testing.T) {
 	}
 }
 
-func TestDylibSymtabValidationChecksAllSixExports(t *testing.T) {
-	exports := allSixExports(0x200)
+func TestDylibSymtabValidationChecksAllTenExports(t *testing.T) {
+	exports := allRequiredExports(0x200)
 
 	validWithSymtab := syntheticGuestAuthDylibWithSymtab(RequiredDylibID, exports, exports, 0x0f)
 	if err := validateRuntimeDylib(validWithSymtab, RequiredDylibID, RequiredExports); err != nil {
@@ -469,14 +469,7 @@ func TestDylibSymtabValidationChecksAllSixExports(t *testing.T) {
 }
 
 func TestFindDirectExportRejectsReexportsAndMalformedTrie(t *testing.T) {
-	trie := buildExportTrie([]syntheticExport{
-		{name: "_" + ExportNotice404DiagnosticEntry, address: 0x200, flags: 0},
-		{name: "_" + ExportGetaddrinfo, address: 0x220, flags: 0},
-		{name: "_" + ExportFreeaddrinfo, address: 0x240, flags: 0},
-		{name: "_" + ExportGethostbyname, address: 0x260, flags: 0},
-		{name: "_" + ExportConnect, address: 0x280, flags: 0},
-		{name: "_" + ExportGuestUniqueCode, address: 0x2a0, flags: 0},
-	})
+	trie := buildExportTrie(allRequiredExports(0x200))
 	for i, name := range RequiredExports {
 		want := uint64(0x200 + i*0x20)
 		addr, err := findDirectExport(trie, "_"+name)
@@ -549,7 +542,7 @@ func TestLoaderDependencyInventoryAndExactDelta(t *testing.T) {
 	}
 }
 
-func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
+func TestValidateMainWriteWindowsForFullPatch(t *testing.T) {
 	const size = 0x1ac2000
 	orig := make([]byte, size)
 	patched := make([]byte, size)
@@ -570,11 +563,30 @@ func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
 		0x3480,
 		0x3500,
 		0x3580,
+		0x3600,
+		0x3640,
+		0x3680,
+		0x3700,
+		0x3780,
+		0x3800,
+		0x38c0,
+		0x3980,
+		0x3a00,
+		0x3a40,
+		0x3b00,
+		int(gdprLoginReadyResolverRVA),
 		0x12d8be4,
 		0x53af68,
+		0x538de4,
 		0x53bc98,
 		0xbfe3b8,
 		0xd1ba00,
+		0x6af020,
+		0x6b39bc,
+		0xbdf494,
+		0x6ae0c8,
+		0x6b2a54,
+		int(gdprLoginReadyCallsiteRVA),
 		0x1ac149c,
 		0x1ac1874,
 		0x1ac1904,
@@ -583,6 +595,14 @@ func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
 	for _, off := range approvedOffsets {
 		if off == 0x53af68 {
 			binary.LittleEndian.PutUint32(patched[off:], autoGuestEntryPatchedWord)
+			continue
+		}
+		if off == int(gdprLoginReadyCallsiteRVA) {
+			word, err := encodeArm64Branch(gdprLoginReadyCallsiteRVA, gdprLoginReadyResolverRVA, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binary.LittleEndian.PutUint32(patched[off:], word)
 			continue
 		}
 		patched[off] = 0x42
@@ -596,6 +616,8 @@ func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
 		missingOne := append([]byte(nil), patched...)
 		if omitOff == 0x53af68 {
 			copy(missingOne[0x53af68:0x53af6c], orig[0x53af68:0x53af6c])
+		} else if omitOff == int(gdprLoginReadyCallsiteRVA) {
+			copy(missingOne[gdprLoginReadyCallsiteRVA:gdprLoginReadyCallsiteRVA+4], orig[gdprLoginReadyCallsiteRVA:gdprLoginReadyCallsiteRVA+4])
 		} else {
 			missingOne[omitOff] = orig[omitOff]
 		}
@@ -613,7 +635,7 @@ func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
 
 	// Mutating outside approved windows must fail.
 	badOutside := append([]byte(nil), patched...)
-	badOutside[0x3600] = 0x11
+	badOutside[0x3c00] = 0x11
 	if err := validateMainWriteWindows(orig, badOutside); err == nil {
 		t.Fatal("write outside approved windows was accepted")
 	}
@@ -628,6 +650,8 @@ func TestValidateMainWriteWindowsForGuestAuthPatch(t *testing.T) {
 		0x53af48,
 		0x53af67,
 		0x53af6c,
+		0x53c430,
+		0x53c438,
 		0x6bdd4c,
 		0x53bc8c,
 		0x53bc9c,
@@ -656,7 +680,7 @@ func TestBuildPackageRealBaselineIPA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exports := allSixExports(0x200)
+	exports := allRequiredExports(0x200)
 	dylib := syntheticGuestAuthDylib(RequiredDylibID, exports, 5)
 	endpointRaw := []byte(`{"v":1,"host":"Cherry.Example.ORG","ports":{"443":8443}}`)
 
@@ -679,13 +703,24 @@ func TestBuildPackageRealBaselineIPA(t *testing.T) {
 	}
 	foundAutoGuestWindow := false
 	for _, rng := range r.MainChanged {
-		if rng.Start == 0x53af68 && rng.End == 0x53af6c {
+		if rng.Start == 0x53af68 && rng.End <= 0x53af6c && rng.End > rng.Start {
 			foundAutoGuestWindow = true
 			break
 		}
 	}
 	if !foundAutoGuestWindow {
 		t.Fatalf("MainChanged missing [0x53af68,0x53af6c): %+v", r.MainChanged)
+	}
+	foundGDPRReadyWindow := false
+	for _, rng := range r.MainChanged {
+		if rng.Start == int(gdprLoginReadyCallsiteRVA) &&
+			rng.End <= int(gdprLoginReadyCallsiteRVA+4) && rng.End > rng.Start {
+			foundGDPRReadyWindow = true
+			break
+		}
+	}
+	if !foundGDPRReadyWindow {
+		t.Fatalf("MainChanged missing [%#x,%#x): %+v", gdprLoginReadyCallsiteRVA, gdprLoginReadyCallsiteRVA+4, r.MainChanged)
 	}
 	const wantCanonical = `{"v":1,"host":"cherry.example.org","ports":{"10000":10000,"10123":10123,"443":8443,"80":80}}`
 	wantSum := sha256.Sum256([]byte(wantCanonical))
@@ -705,7 +740,7 @@ func TestBuildPackageRealBaselineIPA(t *testing.T) {
 		t.Fatal("written package bytes differ from in-memory package")
 	}
 
-	// Verify a dylib missing ANY ONE of the 6 required exports fails BuildPackage against the real IPA.
+	// Verify a dylib missing ANY ONE of the 10 required exports fails BuildPackage against the real IPA.
 	for omitIdx, omitted := range RequiredExports {
 		t.Run("missing_export_"+omitted, func(t *testing.T) {
 			var subset []syntheticExport
