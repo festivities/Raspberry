@@ -1,6 +1,12 @@
 # iOS compatibility assessment
 
-Raspberry can inspect the supported decrypted LINE PLAY 10.1.0 IPA and build an unsigned compatibility IPA with `raspberry ipa patch`. The patched IPA has run in a virtual iPhone; conventional signing, provisioning and physical-device installation are not verified. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
+Raspberry can inspect the supported decrypted LINE PLAY 10.1.0 IPA and build an unsigned compatibility IPA with `raspberry ipa patch`. The patched IPA has run in a virtual iPhone; physical-device coverage is limited to the reports below. The source archive stays read-only, and extracted binaries, disassembly and analysis databases stay outside Git.
+
+## Physical iPhone startup (2026-11-22)
+
+- **[V crash report]** On an iPhone 15 Pro Max running iOS 27.0, iOS loaded Raspberry's dylib and called its constructor. Raspberry then trapped after initialization returned false. The bundle ID installed by Sideloadly differed from the stock ID that the initializer required; the executable's name and UUID matched the prepared package. This was an application startup rejection, not a dyld library-load failure or an observed AirArmor event.
+- **[Reported]** The earlier IPA launched on an iPhone 6s (iOS version and installed bundle ID unknown) and failed to launch on one iOS 17.6.1 device without a crash report yet. The supplied unsigned IPA is byte-identical to the build previously verified on `myphone`, where it was installed with the stock ID. An install that preserved the stock ID would not hit the identified check. The report from iOS 27.0 alone does not establish the cause on iOS 17.6.1.
+- The runtime now checks the locked executable's Mach-O UUID rather than comparing the installed bundle ID to the stock ID. The packager still preserves the original bundle ID, the executable path and other runtime checks remain in place, and signing and provisioning are still required. A physical-device retest of the rebuilt package is pending.
 
 The original November 12 assessment was static-only. On November 17 the user supplied a macOS/vphone environment and authorized autonomous iOS work, superseding the earlier deferral. Static results still cannot establish that re-signing, AirArmor, login, networking or gameplay works on a device.
 

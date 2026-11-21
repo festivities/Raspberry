@@ -87,12 +87,13 @@ go run ./cmd/raspberry ipa patch \
 
 - Outputs an unsigned `raspberry-lineplay-10.1.0-unsigned.ipa` atomically without overwriting existing files.
 - Sign and install the output IPA with your preferred iOS signing / sideloading workflow.
+- When updating an existing sideload, use the same signing identity and installed bundle ID so iOS can treat it as an update rather than a separate app.
 
 ## Security & known boundaries
 
 - **No secrets in the app:** Only the operator's endpoint descriptor is embedded. Discord authentication is mediated by the Cherry server with PKCE (`S256`), random `state`, and short-lived single-use tickets.
 - **Platform TLS vs. stock native libcurl:** Discord sign-in, token exchange, in-app WebView pages, and notice requests use platform TLS validation (your Cherry server needs a publicly trusted certificate for its operator hostname). Stock native game libcurl connections inherit the original client's disabled certificate verification—see [docs/security.md](docs/security.md).
-- **Platform notes:** End-to-end launch, Discord sign-in, Garden, Logout → Discord → Garden, and Delete Avatar → Discord → avatar creation → Garden have been verified on Android 17 (`arm64-v8a`) and iOS (`myphone` virtual device). Physical-device iOS provisioning/sideloading and 32-bit `armeabi-v7a` Android runtime remain community-tested.
+- **Platform notes:** End-to-end launch, Discord sign-in, Garden, Logout → Discord → Garden, and Delete Avatar → Discord → avatar creation → Garden have been verified on Android 17 (`arm64-v8a`) and iOS (`myphone` virtual device). Physical iPhone launch results have varied by signing workflow; see [iOS compatibility notes](docs/ios.md). 32-bit `armeabi-v7a` Android runtime remains unverified.
 
 ## Documentation
 

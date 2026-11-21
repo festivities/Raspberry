@@ -115,6 +115,10 @@ The runtime clears only its origin-bound authorization and the exact cached `avc
 
 **Verification:** host gates, decoded emitted-instruction/register/stack regressions, locked-baseline exact-write tests, deterministic IPA pairs and independent packaged-instruction review pass. An initial Logout crash exposed incorrect return-state preservation; the corrected build recovers to Discord, and the user confirms both **Launch → Settings → Logout → Discord sign-in → same-process return straight to Garden** and **Delete Avatar → Discord sign-in → avatar creation → Garden** (2026-11-21). Refused `guest/generate` HTTP 400, `checkSession` 404, and normal `installd`/provisioning installation remain unverified on-device. Risk: a new native seam or register/return-state error can crash the app; existing generated-byte equality checks alone are not semantic proof.
 
+## iOS startup after a signer changes the bundle ID
+
+The runtime used to reject any installed bundle identifier other than the stock one, even when iOS had loaded the expected executable. A physical iOS 27.0 crash report identified this constructor failure after a Sideloadly install. Runtime validation now checks the locked main executable's Mach-O UUID in addition to the existing executable path, mapped segments and method guards. The offline SHA-256 input lock and signing requirements are unchanged; Raspberry does not rewrite the bundle ID or change stock protection code. See [ios.md](ios.md) for device coverage.
+
 ## Experimental iOS loader probe (historical)
 
 This separate developer probe was **not** a complete iOS patch. It predates the current `raspberry ipa patch` command.

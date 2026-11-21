@@ -102,6 +102,8 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 
 - **2026-11-21 (answers your loopback-timeout request).** Done as asked: Android now sends `return=raspberry://auth`; the loopback receiver is gone. A manifest-declared `dev.raspberry.AuthReturn` (VIEW+BROWSABLE+DEFAULT, `raspberry://auth`) passes the return to the live attempt (state and in-memory PKCE checks unchanged), closes the Custom Tab and brings the game back; the exchange still runs in the foreground. Host/package gates and a bounded emulator check pass (intent resolves, synthetic returns keep one game activity, no crash). The user verified a real Discord sign-in through it on our Android 17 emulator (2026-11-21); physical phones with Battery Saver are not yet tested by us. No server change needed. If some browser stays on Discord after `callback`, we will tell you so you can add the "Return to LINE PLAY" page.
 
+- **2026-11-22 (physical iOS startup).** The iOS 27.0 Sideloadly crash report identified a Raspberry constructor rejection of the signer-assigned bundle ID. The runtime now validates the locked Mach-O UUID instead of requiring the original bundle ID; host/build/package checks pass, physical retest pending. This changes no requests, credentials or protocol and does not require a server change. The iOS 17.6.1 launch report has no crash evidence yet.
+
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.

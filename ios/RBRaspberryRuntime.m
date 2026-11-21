@@ -13,6 +13,7 @@
 #import "RBAuthUIKitOwnerConditions.h"
 #import "RBAuthUIKitSignInOverlay.h"
 #import "RBEndpoint.h"
+#import "RBLockedMainImageIdentity.h"
 #import "RBNoticeRouteClient.h"
 #import "RBNoticeRouteErrorAdapter.h"
 #import "RBWebURLRouter.h"
@@ -498,11 +499,12 @@ static BOOL RBRaspberryRuntimeFindUniqueMainImage(
 
     NSString *executablePath = NSBundle.mainBundle.executablePath;
     NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier;
-    if (executablePath == nil || bundleIdentifier == nil ||
-        ![bundleIdentifier isEqualToString:@"jp.naver.lineplay"] ||
+    if (executablePath == nil ||
         ![[executablePath lastPathComponent]
             isEqualToString:@"LINEPlay_Store"] ||
-        strcmp(candidatePath, executablePath.fileSystemRepresentation) != 0) {
+        strcmp(candidatePath, executablePath.fileSystemRepresentation) != 0 ||
+        !rb_locked_main_image_identity_matches(bundleIdentifier.UTF8String,
+                                               candidateHeader)) {
         return NO;
     }
 

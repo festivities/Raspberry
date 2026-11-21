@@ -76,6 +76,8 @@ go run ./cmd/raspberry ipa patch \
 
 `scripts/build-ios-runtime.sh` writes `build/ios/libraspberry.dylib` (`arm64-apple-ios15.0`, `@rpath/libraspberry.dylib`, version `1.0.0`) under the gitignored `build/` tree. `ipa patch` accepts repeatable `--port <client>=<endpoint>` mappings (ports `80`, `443`, `10000`, `10123`) and an optional `--dylib <file>` (default `build/ios/libraspberry.dylib`), verifies all Mach-O write/guard windows and deterministic ZIP assembly in memory, and writes `raspberry-lineplay-10.1.0-unsigned.ipa` atomically without overwriting an existing file. The output IPA is unsigned; sign and install it with your signing tool or vphone.
 
+Raspberry preserves the input bundle ID when it builds the IPA. If your signer assigns a different bundle ID, keep that installed ID and signing identity the same across updates so iOS can retain the existing app data. Rebuild the runtime as well as the IPA when updating Raspberry.
+
 ## Limits
 
 Combined signed reruns have been verified byte-identical, with exactly the [documented entry changes](patches.md). Full game/auth/web acceptance is still pending. Native game TLS verification stays disabled in the stock client; see [security.md](security.md). The patcher does not fix that. A successful local sign is not evidence of production transport security. The DEX verifier checks untouched methods and full expected edited bodies; the command refuses to sign when that check fails.

@@ -39,6 +39,15 @@ clang -std=c11 -Wall -Wextra -Werror \
 
 clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/ios" \
+    "$root/ios/RBLockedMainImageIdentity_test.c" \
+    -o "$tmp/RBLockedMainImageIdentity_test" ||
+    fail 'compile locked main-image identity tests'
+
+"$tmp/RBLockedMainImageIdentity_test" ||
+    fail 'locked main-image identity tests failed'
+
+clang -std=c11 -Wall -Wextra -Werror \
+    -I"$root/ios" \
     "$root/ios/RBCurlProbe.c" "$root/ios/curl_probe_test.c" \
     -o "$tmp/curl_probe_test" || fail 'compile cURL-probe host-fake tests'
 
