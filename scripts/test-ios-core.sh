@@ -48,6 +48,15 @@ clang -std=c11 -Wall -Wextra -Werror \
 
 clang -std=c11 -Wall -Wextra -Werror \
     -I"$root/ios" \
+    "$root/ios/RBKeyboardGeometry_test.c" \
+    -o "$tmp/RBKeyboardGeometry_test" ||
+    fail 'compile keyboard geometry tests'
+
+"$tmp/RBKeyboardGeometry_test" ||
+    fail 'keyboard geometry tests failed'
+
+clang -std=c11 -Wall -Wextra -Werror \
+    -I"$root/ios" \
     "$root/ios/RBCurlProbe.c" "$root/ios/curl_probe_test.c" \
     -o "$tmp/curl_probe_test" || fail 'compile cURL-probe host-fake tests'
 

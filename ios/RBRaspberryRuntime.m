@@ -18,6 +18,7 @@
 #import "RBNoticeRouteErrorAdapter.h"
 #import "RBWebURLRouter.h"
 
+#include "RBKeyboardGeometry.h"
 #include "RBSocketRouter.h"
 #include "endpoint.h"
 
@@ -589,9 +590,10 @@ static BOOL RBRaspberryRuntimeClassIsInMainImage(
         strcmp(classImage, mainImage->imagePath) == 0;
 }
 
-static BOOL RBRaspberryRuntimeMethodMatches(
+static BOOL RBRaspberryRuntimeMethodMatchesKind(
     Class targetClass,
     SEL selector,
+    BOOL instanceMethod,
     const char *expectedEncoding,
     uintptr_t expectedRVA,
     const RBRaspberryRuntimeMainImage *mainImage,
@@ -602,7 +604,9 @@ static BOOL RBRaspberryRuntimeMethodMatches(
         !RBRaspberryRuntimeRVAIsExecutable(mainImage, expectedRVA, 1)) {
         return NO;
     }
-    Method method = class_getClassMethod(targetClass, selector);
+    Method method = instanceMethod
+        ? class_getInstanceMethod(targetClass, selector)
+        : class_getClassMethod(targetClass, selector);
     if (method == NULL) {
         return NO;
     }
@@ -622,6 +626,28 @@ static BOOL RBRaspberryRuntimeMethodMatches(
         *implementationOut = implementation;
     }
     return YES;
+}
+
+static BOOL RBRaspberryRuntimeMethodMatches(
+    Class targetClass,
+    SEL selector,
+    const char *expectedEncoding,
+    uintptr_t expectedRVA,
+    const RBRaspberryRuntimeMainImage *mainImage,
+    IMP *implementationOut) {
+    return RBRaspberryRuntimeMethodMatchesKind(targetClass, selector, NO,
+        expectedEncoding, expectedRVA, mainImage, implementationOut);
+}
+
+static BOOL RBRaspberryRuntimeInstanceMethodMatches(
+    Class targetClass,
+    SEL selector,
+    const char *expectedEncoding,
+    uintptr_t expectedRVA,
+    const RBRaspberryRuntimeMainImage *mainImage,
+    IMP *implementationOut) {
+    return RBRaspberryRuntimeMethodMatchesKind(targetClass, selector, YES,
+        expectedEncoding, expectedRVA, mainImage, implementationOut);
 }
 
 static BOOL RBRaspberryRuntimeValidateError(
@@ -1220,6 +1246,236 @@ static BOOL RBRaspberryRuntimeInstallWebURLSwizzles(void) {
     return installed;
 }
 
+// Keyboard geometry guard (Issue B). The stock EAGLView keyboard handler
+// divides by the keyboard begin-frame width; a zero/non-finite width turns
+// the stored editor rects into NaN and a later UITextView/UITextField
+// setFrame: into an uncaught CALayer exception. Only numeric geometry is
+// inspected or logged; text, notification objects and other keys are kept.
+typedef void (*RBEAGLViewKeyboardNotificationIMP)(
+    id self, SEL _cmd, NSNotification * _Nullable notification);
+typedef void (*RBEditTextTracePositionIMP)(
+    id self, SEL _cmd, float x, float y, float width, float height);
+
+static const uintptr_t RBRaspberryRuntimeKeyboardNotificationRVA = 0x156DF20u;
+static const uintptr_t RBRaspberryRuntimeEditTracePositionRVA = 0x18493F0u;
+static const char RBRaspberryRuntimeKeyboardNotificationEncoding[] =
+    "v24@0:8@16";
+static const char RBRaspberryRuntimeEditTracePositionEncoding[] =
+    "v32@0:8f16f20f24f28";
+static const NSUInteger RBRaspberryRuntimeKeyboardUnchangedLogLimit = 4u;
+static const NSUInteger RBRaspberryRuntimeKeyboardGuardLogLimit = 32u;
+
+static IMP RBRaspberryRuntimeOriginalKeyboardNotificationIMP = NULL;
+static IMP RBRaspberryRuntimeOriginalEditTracePositionIMP = NULL;
+static NSUInteger RBRaspberryRuntimeKeyboardUnchangedLogs = 0;
+static NSUInteger RBRaspberryRuntimeKeyboardGuardLogs = 0;
+static NSUInteger RBRaspberryRuntimeEditTraceSkipLogs = 0;
+
+static const char *RBRaspberryRuntimeKeyboardNotificationKind(
+    NSNotificationName _Nullable name) {
+    if (name == UIKeyboardWillShowNotification) {
+        return "will-show";
+    }
+    if (name == UIKeyboardDidShowNotification) {
+        return "did-show";
+    }
+    if (name == UIKeyboardWillHideNotification) {
+        return "will-hide";
+    }
+    if (name == UIKeyboardDidHideNotification) {
+        return "did-hide";
+    }
+    return "other";
+}
+
+static RBKeyboardRect RBRaspberryRuntimeKeyboardRectFromValue(
+    id _Nullable value) {
+    RBKeyboardRect rect = {0.0, 0.0, 0.0, 0.0};
+    if (![value isKindOfClass:[NSValue class]]) {
+        return rect;
+    }
+    const char *type = [(NSValue *)value objCType];
+    if (type == NULL || strcmp(type, @encode(CGRect)) != 0) {
+        return rect;
+    }
+    CGRect cgRect = [(NSValue *)value CGRectValue];
+    rect.x = cgRect.origin.x;
+    rect.y = cgRect.origin.y;
+    rect.width = cgRect.size.width;
+    rect.height = cgRect.size.height;
+    return rect;
+}
+
+static NSValue *RBRaspberryRuntimeKeyboardValueFromRect(RBKeyboardRect rect) {
+    return [NSValue valueWithCGRect:CGRectMake(
+        rect.x, rect.y, rect.width, rect.height)];
+}
+
+static void RBRaspberryRuntimeLogKeyboardGeometry(
+    const char *kind,
+    RBKeyboardGeometryResult result,
+    RBKeyboardRect begin,
+    RBKeyboardRect end,
+    double viewWidth) {
+    os_log(OS_LOG_DEFAULT,
+        "raspberry-ios keyboard-geometry %{public}s result=%d "
+        "begin=[%.1f %.1f %.1f %.1f] end=[%.1f %.1f %.1f %.1f] view=%.1f",
+        kind, (int)result,
+        begin.x, begin.y, begin.width, begin.height,
+        end.x, end.y, end.width, end.height, viewWidth);
+}
+
+static void RBRaspberryRuntimeEAGLViewKeyboardNotification(
+    id self, SEL _cmd, NSNotification * _Nullable notification) {
+    RBEAGLViewKeyboardNotificationIMP original =
+        (RBEAGLViewKeyboardNotificationIMP)
+            RBRaspberryRuntimeOriginalKeyboardNotificationIMP;
+    if (original == NULL) {
+        return;
+    }
+    if (![notification isKindOfClass:[NSNotification class]] ||
+        ![self isKindOfClass:[UIView class]]) {
+        original(self, _cmd, notification);
+        return;
+    }
+
+    NSDictionary *userInfo = notification.userInfo;
+    if (userInfo != nil && ![userInfo isKindOfClass:[NSDictionary class]]) {
+        original(self, _cmd, notification);
+        return;
+    }
+    RBKeyboardRect begin = RBRaspberryRuntimeKeyboardRectFromValue(
+        userInfo[UIKeyboardFrameBeginUserInfoKey]);
+    RBKeyboardRect end = RBRaspberryRuntimeKeyboardRectFromValue(
+        userInfo[UIKeyboardFrameEndUserInfoKey]);
+    double viewWidth = ((UIView *)self).bounds.size.width;
+    RBKeyboardRect fixedBegin = begin;
+    RBKeyboardRect fixedEnd = end;
+    RBKeyboardGeometryResult result =
+        rb_keyboard_sanitize(begin, end, viewWidth, &fixedBegin, &fixedEnd);
+    const char *kind =
+        RBRaspberryRuntimeKeyboardNotificationKind(notification.name);
+
+    if (result == RB_KEYBOARD_GEOMETRY_UNCHANGED) {
+        if (RBRaspberryRuntimeKeyboardUnchangedLogs <
+            RBRaspberryRuntimeKeyboardUnchangedLogLimit) {
+            RBRaspberryRuntimeKeyboardUnchangedLogs++;
+            RBRaspberryRuntimeLogKeyboardGeometry(kind, result, begin, end,
+                                                  viewWidth);
+        }
+        original(self, _cmd, notification);
+        return;
+    }
+
+    if (RBRaspberryRuntimeKeyboardGuardLogs <
+        RBRaspberryRuntimeKeyboardGuardLogLimit) {
+        RBRaspberryRuntimeKeyboardGuardLogs++;
+        RBRaspberryRuntimeLogKeyboardGeometry(kind, result, begin, end,
+                                              viewWidth);
+    }
+    if (result != RB_KEYBOARD_GEOMETRY_SANITIZED) {
+        // No usable width anywhere: the stock handler could only produce
+        // NaN, so this one notification is withheld.
+        return;
+    }
+
+    NSMutableDictionary *fixedInfo = userInfo != nil
+        ? [userInfo mutableCopy]
+        : [NSMutableDictionary dictionary];
+    fixedInfo[UIKeyboardFrameBeginUserInfoKey] =
+        RBRaspberryRuntimeKeyboardValueFromRect(fixedBegin);
+    fixedInfo[UIKeyboardFrameEndUserInfoKey] =
+        RBRaspberryRuntimeKeyboardValueFromRect(fixedEnd);
+    NSNotification *fixed = [NSNotification
+        notificationWithName:notification.name
+                      object:notification.object
+                    userInfo:[fixedInfo copy]];
+    // The stock handler compares the name by pointer with UIKit's constants.
+    if (fixed == nil || fixed.name != notification.name) {
+        os_log_error(OS_LOG_DEFAULT,
+            "raspberry-ios keyboard-geometry %{public}s withheld: "
+            "name identity not preserved", kind);
+        return;
+    }
+    original(self, _cmd, fixed);
+}
+
+static void RBRaspberryRuntimeEditTextTracePosition(
+    id self, SEL _cmd, float x, float y, float width, float height) {
+    RBEditTextTracePositionIMP original =
+        (RBEditTextTracePositionIMP)
+            RBRaspberryRuntimeOriginalEditTracePositionIMP;
+    if (original == NULL) {
+        return;
+    }
+    if (!rb_keyboard_trace_inputs_finite(x, y, width, height)) {
+        // Backstop: keep the native editor at its previous frame instead of
+        // handing a non-finite rect to UIKit (uncaught CALayer exception).
+        if (RBRaspberryRuntimeEditTraceSkipLogs <
+            RBRaspberryRuntimeKeyboardGuardLogLimit) {
+            RBRaspberryRuntimeEditTraceSkipLogs++;
+            os_log(OS_LOG_DEFAULT,
+                "raspberry-ios edit-trace skipped non-finite "
+                "[%.1f %.1f %.1f %.1f]",
+                (double)x, (double)y, (double)width, (double)height);
+        }
+        return;
+    }
+    original(self, _cmd, x, y, width, height);
+}
+
+static BOOL RBRaspberryRuntimeInstallGuardedInstanceSwizzle(
+    const RBRaspberryRuntimeMainImage *mainImage,
+    const char *className,
+    const char *selectorName,
+    const char *encoding,
+    uintptr_t rva,
+    IMP replacement,
+    IMP _Nullable * _Nonnull originalSlot) {
+    Class targetClass = (Class)objc_getClass(className);
+    SEL selector = sel_registerName(selectorName);
+    IMP stock = NULL;
+    if (!RBRaspberryRuntimeInstanceMethodMatches(targetClass, selector,
+            encoding, rva, mainImage, &stock)) {
+        return NO;
+    }
+    IMP previous = NULL;
+    if (!RBRaspberryRuntimeSwizzleInstanceMethod(targetClass, selector,
+            replacement, &previous)) {
+        return NO;
+    }
+    if (previous != stock) {
+        // Someone else replaced the method in between: restore and refuse.
+        Method method = class_getInstanceMethod(targetClass, selector);
+        if (method != NULL) {
+            method_setImplementation(method, previous);
+        }
+        return NO;
+    }
+    *originalSlot = previous;
+    return YES;
+}
+
+// Non-fatal: a failed guard leaves the stock behavior unchanged.
+static void RBRaspberryRuntimeInstallKeyboardGeometryGuards(
+    const RBRaspberryRuntimeMainImage *mainImage) {
+    BOOL keyboard = RBRaspberryRuntimeInstallGuardedInstanceSwizzle(
+        mainImage, "EAGLView", "onUIKeyboardNotification:",
+        RBRaspberryRuntimeKeyboardNotificationEncoding,
+        RBRaspberryRuntimeKeyboardNotificationRVA,
+        (IMP)RBRaspberryRuntimeEAGLViewKeyboardNotification,
+        &RBRaspberryRuntimeOriginalKeyboardNotificationIMP);
+    BOOL trace = RBRaspberryRuntimeInstallGuardedInstanceSwizzle(
+        mainImage, "PfEditText_iOS", "TracePosition_x:y:width:height:",
+        RBRaspberryRuntimeEditTracePositionEncoding,
+        RBRaspberryRuntimeEditTracePositionRVA,
+        (IMP)RBRaspberryRuntimeEditTextTracePosition,
+        &RBRaspberryRuntimeOriginalEditTracePositionIMP);
+    os_log(OS_LOG_DEFAULT,
+        "raspberry-ios keyboard-geometry guards keyboard=%d trace=%d",
+        keyboard ? 1 : 0, trace ? 1 : 0);
+}
+
 static void RBRaspberryRuntimeOnLoginReadyMain(uint32_t source) {
     if (![NSThread isMainThread]) {
         return;
@@ -1398,6 +1654,7 @@ static BOOL RBRaspberryRuntimeInitialize(void) {
         rb_router_destroy(&RBRaspberryRuntimeSocketRouter);
         return NO;
     }
+    RBRaspberryRuntimeInstallKeyboardGeometryGuards(&mainImage);
 
     atomic_store_explicit(&RBRaspberryRuntimeHasEndpoint, endpoint != nil,
                           memory_order_release);

@@ -119,6 +119,17 @@ The runtime clears only its origin-bound authorization and the exact cached `avc
 
 The runtime used to reject any installed bundle identifier other than the stock one, even when iOS had loaded the expected executable. A physical iOS 27.0 crash report identified this constructor failure after a Sideloadly install. Runtime validation now checks the locked main executable's Mach-O UUID in addition to the existing executable path, mapped segments and method guards. The offline SHA-256 input lock and signing requirements are unchanged; Raspberry does not rewrite the bundle ID or change stock protection code. See [ios.md](ios.md) for device coverage.
 
+## iOS keyboard geometry guard (2026-11-22)
+
+- **Target:** stock `-[EAGLView onUIKeyboardNotification:]` (`0x10156DF20`, `v24@0:8@16`) and `-[PfEditText_iOS TracePosition_x:y:width:height:]` (`0x1018493F0`, `v32@0:8f16f20f24f28`). Both are runtime method replacements in Raspberry's own dylib. No executable bytes change.
+- **Evidence [S + crash reports]:** two physical crashes have the same uncaught `CALayer` geometry exception from `TracePosition` → `setFrame:`: iOS 27.0 chat keyboard (`UITextView`) and iOS 27.2 avatar-name SELECT (`UITextField`). The stock handler scales all keyboard rects by `frameWidth / (beginFrame.width × contentScale / scaleX)`. A zero, negative or non-finite begin width yields inf/NaN. The editor stores these rects (`0x101908AF0`), and `KEYBOARD_SHOW` layers use them to place panels. The device's actual begin rect is not yet captured.
+- **Change:** when the begin width is unusable, pass a copied notification to the stock handler with that width taken from the end rect, or else from the view width. Non-finite components are replaced, and every other `userInfo` key and the notification name/object are kept. A notification with no usable width anywhere is withheld. As a backstop, `TracePosition` with non-finite inputs is skipped, so the native editor keeps its previous frame. Pure decisions are in `ios/RBKeyboardGeometry.h`.
+- **Guards:** each method must be in the main image with the exact encoding and IMP at the locked RVA, and the replaced IMP must be the stock one. A failed guard is logged and leaves stock behavior unchanged (non-fatal).
+- **Logging:** numeric rects only (`raspberry-ios keyboard-geometry …`): the first four unchanged notifications and up to 32 sanitized, withheld or skipped events. No text, objects or identifiers are logged.
+- **Device result:** user-verified on the iPhone 15 Pro Max (iOS 27.0, Sideloadly): chat input and avatar creation no longer abort. The iPhone 16e (iOS 27.2) has not been retested.
+- **Verify:** `ios/RBKeyboardGeometry_test.c` (core gate), strict SDK build. On a device, open chat or the avatar name field and confirm no abort; the unified log shows `guards keyboard=1 trace=1` and the real begin/end rects.
+- **Risk:** if iOS reports a begin width that is wrong but positive, it is still used as is. Skipping a non-finite `TracePosition` can leave the native field at its previous position for that frame.
+
 ## Experimental iOS loader probe (historical)
 
 This separate developer probe was **not** a complete iOS patch. It predates the current `raspberry ipa patch` command.

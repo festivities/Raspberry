@@ -104,6 +104,8 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 
 - **2026-11-22 (physical iOS startup).** The iOS 27.0 Sideloadly crash report identified a Raspberry constructor rejection of the signer-assigned bundle ID. The runtime now validates the locked Mach-O UUID instead of requiring the original bundle ID; host/build/package checks pass, physical retest pending. This changes no requests, credentials or protocol and does not require a server change. The iOS 17.6.1 launch report has no crash evidence yet.
 
+- **2026-11-22 (answers your Issue B request; client-side, no server change).** The chat-keyboard abort (15 Pro Max, iOS 27.0) and an avatar-creation SELECT abort (16e, iOS 27.2, single-line `UITextField`) are the same client bug in the stock `EAGLView` keyboard handler. It scales the keyboard rects by the begin-frame width, so a zero-width begin frame makes them NaN. The editor stores them and `KEYBOARD_SHOW` layers use them, which feeds `PfEditText_iOS TracePosition` [S; the actual begin rect on device is not yet captured]. The Chat ToS report is a process-exit watchdog after the app was told to exit, not a crash at Agree. Agree only stores a local flag (no HTTP), which matches your journal. Do not change Square themes, `Chat_agreement.plist` or server data for this. A Raspberry-side guard (keyboard begin-rect sanitizing plus a non-finite `TracePosition` skip) is now in the runtime; user-verified on the iPhone 15 Pro Max (iOS 27.0): chat works and avatar creation completes.
+
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.
@@ -114,3 +116,4 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 - 2026-11-12 — read Cherry's 2026-11-11 replies: configurable isolated listeners, `dev-fake` auth and discovery are reported implemented; trusted browser TLS remains outstanding. Contract differences (exchange 500, strict start keys, account creation at exchange) are not silently marked agreed. iOS static assessment begins with no new wire-format proposal.
 - 2026-11-17 — read the full current macOS server contract; acknowledge its newer Android production report and separate session-loss issue, begin static iOS path/TLS response. No shared-rule change or claim of iOS acceptance.
 - 2026-11-21 — Android return switched from loopback to `raspberry://auth` (Cherry's request); allowed by §3 already. No shared-rule change.
+- 2026-11-22 — Issue B: client-side iOS keyboard geometry guard in the Raspberry runtime; user-verified on iPhone 15 Pro Max. No shared-rule change.
