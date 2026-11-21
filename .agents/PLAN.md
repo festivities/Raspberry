@@ -2,7 +2,106 @@
 
 Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab facts and client facts: [AGENTS.md](AGENTS.md). The interface with Cherry servers: [CONTRACT.md](CONTRACT.md). Dated evidence and old pairs: [HISTORY.md](HISTORY.md). Implementation is in progress; the status table and current handoff supersede the original proposal.
 
-## HANDOFF INITIATED — 2026-11-21 (iOS re-auth delivered; Delete Avatar / Android next)
+## HANDOFF INITIATED — 2026-11-21 (Android & iOS v1 production-ready delivery)
+
+**Resume here.** Receiving agent with zero context: read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `README.md`, `docs/{usage,build,patches,security,ios}.md`, and Cherry's `.agents/CONTRACT.md` (read-only). Append **HANDOFF ACCEPTED** after checking `git log -1`, `git status`, and current resources. This block supersedes all older handoffs below.
+
+### Delivered milestone (user-verified on both Android & iOS)
+
+- **Android equivalent re-auth (this delivery):**
+  - Offline ELF patch tables (`patches/libgame-{arm64,armv7}.tbl`, 9 edits per ABI) with full ARM64 and Thumb-2 decoded-instruction semantic tests (`internal/patch/reauth_table_test.go`, `guest_autoentry_table_test.go`, `table_test.go`) and zero stock `classes3.dex` changes.
+  - Native C11 classifier/tx-watermark fence + Android RELRO/vtable/`.bss`-tail hooks + JNI bridge (`native/{reauth.h,reauth.c,reauth_test.c,reauth_android.c,hook.c,jni.c}`, `scripts/build-native.ps1`), zero runtime RX writes, zero worker pauses. Fixed two live-discovered bugs: non-virtual `NaLoginLayer::init` liveness tracking (`mark_login_layer_alive_locked`) and `TransactionGenerator::Transaction` (`XSystem::Threading::Interlocked::atomic_uint` heap-allocated `uint32_t *` handle) dereference in `current_tx_id()`.
+  - Java monotonic reset epoch coordinator + checked narrow 3-key & `files/avcookie.na` cleanup (`android/src/dev/raspberry/core/ReauthState.java`, `Raspberry.java`, `android/host-test/dev/raspberry/core/CoreTest.java`).
+  - **Windows IPA output-privacy fix:** protected current-user-only Windows DACL creation/verification and file-identity checks (`internal/ipa/package.go`, `package_private_{unix,windows}.go`, `package_private_windows_test.go`, `package_test.go`, `cmd/raspberry/ipa_test.go`).
+  - **End-user docs:** created `README.md` covering Android and iOS quick-start, locked input hashes, and security boundaries.
+- **User-verified device acceptance (2026-11-21):**
+  - **Android 17 (`emulator-5559`, AVD `Raspberry`, `pkg-live-v4` SHA-256 `967fffc21b744b851b12069ec1ad9e70e83c80f7d90181b22d33a4b4bbc5ea4f`):**
+    - Live `checkSession` HTTP 404 → legacy login suppressed → narrow `avcookie.na` + 3 auth prefs cleared → Discord sign-in dialog (screenshots + empty crash buffer verified by main).
+    - Launch → Settings → Logout → Discord sign-in → same-process return straight to Garden without restarting (user-verified).
+    - Delete Avatar → Discord sign-in → avatar creation → Garden (user-verified).
+  - **iOS (`myphone`, `508e23a`):**
+    - Launch → Settings → Logout → Discord sign-in → same-process return straight to Garden without restarting (user-verified).
+    - Delete Avatar → Discord sign-in → avatar creation → Garden (user-verified).
+
+### Known boundaries & optional future work (non-blocking)
+
+1. Stock native Android libcurl connections inherit disabled certificate verification (`docs/security.md`); Discord OAuth/exchange, Java WebView/notice, and iOS unified-notice/exchange use platform TLS.
+2. Unverified on-device edge cases: 32-bit `armeabi-v7a` Android runtime, refused `guest/generate` HTTP 400 client UI, iOS physical-device `installd`/provisioning sideloading (verified via `vphoned`), and macOS execution of the Windows-added IPA privacy changes (Darwin cross-compile passed).
+3. Cherry's open `create/avatar` human/animal item-code capture request remains optional follow-up if needed.
+
+### Git, resources & hygiene
+
+- User authorized commit and push when all green. Check `git log -1`, `git status`, and `origin/main` for the actual delivered commit hash.
+- Existing unrelated `.claude/settings.json` modification was left untouched and unstaged.
+- Private evidence, scratch IDBs (`android-reauth-20261121\`), APKs, and signing keys stay outside Git; `ida-mcp list_databases` is empty (0 open instances); no background tasks or subagents remain active. Cherry and both artifact archives remain read-only.
+
+## Prior handoff — 2026-11-21 (Windows Android research; superseded)
+
+**Resume here.** User requested wrap-up and immediate agent switch: **do not commit or push**. Read Raspberry's `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `docs/{patches,build,security}.md`, then Cherry's `.agents/CONTRACT.md` read-only. Append **HANDOFF ACCEPTED** after checking Git and current resources. This block supersedes all older intake/handoff priorities.
+
+### Goal and boundaries
+
+- Continue **Android equivalent re-auth** for successful Logout, actual Delete Avatar success, confirmed `checkSession` HTTP 404 and refused `guest/generate` HTTP 400/body errorCode400. Fresh Discord must precede stock guest re-entry; do not expose the legacy login page or reuse revoked codes.
+- No Android runtime feature was implemented, packaged, deployed or device-tested in this session. Work so far is static research plus a separately reviewed Windows host-package privacy correction.
+- iOS remains delivered at `508e23a`; user previously verified sign-in → Garden and Logout → Discord. **iOS Delete Avatar remains unverified.** No iOS device actions in this Windows session.
+- Preserve app data/assets and consent; Delete Avatar is destructive and needs explicit authorization/disposable identity. Cherry, archives, services and operator configuration stay read-only. No installation, Frida, global Python, account action or tool-permission workaround.
+
+### Git and uncommitted changes
+
+- `main` / `origin/main` are at **`508e23a`**. Nothing staged; no commit or push in this session.
+- Existing **`.claude/settings.json`** modification predates intake. Do not overwrite, stage or claim it.
+- Reviewed own implementation: `internal/ipa/package.go`, `internal/ipa/package_test.go`, `cmd/raspberry/ipa_test.go`, and new **untracked** `internal/ipa/package_private_{unix,windows}.go`, `internal/ipa/package_private_windows_test.go`. Preserve these new files explicitly when transferring the working tree.
+- Own docs: `docs/build.md`, `.agents/{AGENTS,PLAN,CONTRACT}.md`. No Android source/native/table/DEX edits.
+- Windows checkout initially had CRLF in 16 Go files although the index has LF. Scoped `gofmt -w` restored LF without content changes. `git status` may still list these files, while `git diff --numstat`/actual diff shows no changes: `cmd/raspberry/{ipa.go,main.go,patch_test.go}`, `internal/ipa/{enqueue_probe*,inspect*,loader*,patch*}`, `internal/sign/{safe.go,sign_test.go}`. Do not stage cosmetic churn or change Git config to hide it.
+
+### Host fix: reviewed and gated, not delivered
+
+The Windows baseline race suite exposed two IPA output-privacy assertions (`0666` versus expected Unix `0600`). This was not fixed by skipping security:
+
+- Windows creates an empty temp file with a protected, current-user-only DACL via native Win32 APIs **before writing private bytes**; verifies owner/DACL before write and after publication. Unix checks regular-file mode `0600`.
+- No-replace hard-link publication is retained. File identity is checked before linking and after publishing; cleanup deletes only paths still matching the owned file. Persistent `Stat` failure can leave an owned temp rather than risk deleting a substituted path.
+- Tests cover temp privacy before writing, published output, Everyone-ACL rejection and substituted-path identity. The CLI's mode-bit assertion is Unix-only; internal package tests own Windows ACL verification. No dependency or exported permission API added.
+- Main reviewed the full diff, including platform files, and requested/remade cleanup deduplication and identity checks. Main **full `scripts/gate.ps1`**, **`go test -race -count=1 ./...`** (all eight packages), and **`git diff --check`** pass. Worker also cross-compiled Darwin/arm64 IPA tests; **no macOS execution** in this slice.
+- Android baseline **`android/host-test.ps1`**, **`scripts/build-dex.ps1`**, **`scripts/build-dexpatch.ps1`** and **`scripts/build-native.ps1`** pass. Java source/target-8/deprecation warnings only. Ignored `build/` artifacts are baseline builds, not new Android re-auth payloads.
+- Archive APK rehashed read-only and matches `aa6495a0430beef0c9a719a1f09fe836ff1c82a0f4f96235d47fffda070b45d1`.
+
+### Private research and exact next work
+
+Root: **`C:\Users\fes\AppData\Local\Temp\opencode\raspberry\android-reauth-20261121\`**.
+
+1. **`java-reauth-design.md`**, complete source mapping, main-read. Existing `beforeNative` only gates the one-shot startup runnable; rerunning it does not pause a live engine. Never rerun `cusCocosInit`/startup to simulate re-auth. Current Java/JNI has no session-reset callback. Current `clearLogin()` ignores preference commit success; a reset must verify narrow cleanup/readback and fence stale OAuth results.
+2. **`android-reauth-spec.md`**, initial both-ABI static report, main-read, **not implementation-ready**. Trigger IDs: Logout14 with true result; actual deletion13 with true result (code request12 is not deletion); checkSession6 + actual HTTP404; guest41 + HTTP400 + parsed400. Generic error messages/cookie removal are not revocation evidence. Logout does **not** clear the native device-UUID cache on either ABI; Delete Avatar has different cleanup. ADI response dispatch has no observed reset epoch. Exact symbol/address details stay in the private report.
+3. Follow-up **`android-guest-reentry-spec.md`**: narrow fresh-code argument at guest generation (same value drives JSON and account-header derivation), exported/native bridge ABI, GL-thread scheduling, consent-ready one-shot continuation. Prefer this over globally replacing telemetry identity. **Do not assume written/completed:** stop was requested during work.
+4. Follow-up **`android-reset-dispatch-spec.md`**: exact response object/status/route operation seams, offline bridge feasibility and stale queued/in-flight response fence. Must preserve unrelated/transient/5xx behavior, avoid blanket worker pause. **Do not assume written/completed:** stop was requested during work.
+
+Finish/review those two concrete seams before choosing an implementation. A process restart was only a conditional fallback, **not selected or verified**. Do not port iOS addresses/ABI/bridge words. New native byte emitters need semantic decoded register/stack/return tests, not emitter equality alone. Then delegate implementation with disjoint ownership, main-review, run Windows/Android/DEX/native/package gates and only then authorize bounded in-place device checks. Native findings have not been independently re-disassembled by main yet.
+
+### Device/resources at handoff
+
+- Read-only checks verified **AVD Raspberry = `emulator-5559`**, Android17, **1290×2796**, installed package `jp.naver.lineplay.android`. PID query returned none. Another transport `emulator-5558` was offline and untouched.
+- Tester package-version/foreground filters were inconclusive; signer unknown. Phone permission query used an unsupported subcommand, so state is **unconfirmed**, unchanged. Never assume its historical denied/granted state.
+- Tester stopped when report-directory creation was refused by the shell scanner and did not retry through another tool. No saved `android-preflight.md`; evidence is the tester reply (`ses_e037c8787ffeD2g6ChaLG2yLVO`). No screenshot, launch/stop, input/unlock, install, permission, credential or account action.
+- No stub/server/log capture/build/test is active. Java/host-fix workers and tester are idle.
+- **Research stop requested:** guest RE session `ses_e0394d86dffeBhNyQ99NxTeCup`; response RE session `ses_e034bdf89ffeQU5wpg57Su6sNE`. They were told to stop immediately, preserve partial notes and close only their owned IDA copies without saving. Check any final replies before resuming; do not claim they finished solely because stop was requested.
+- At the stop request, IDA listed owned scratch copies (not pristine): guest arm64 lease `0e9781597215`, guest ARMv7 `a0a2ca2e8d27`, response arm64 `7184856b0b4f`, response ARMv7 `935d93ea31fc`. **Re-enumerate; IDs are ephemeral.** Never open Cherry's pristine DB. Lease-closure confirmation is appended below if received before handoff.
+- **Final stop confirmation:** both RE sessions are idle. Neither follow-up spec was written; only the two initial reports exist. Guest RE closed its own two leases; main closed the two reset-dispatch leases (final lease released, no save requested). Final `ida-mcp list_databases` reports **zero instances**. Scratch copies are preserved. No build/test/capture/device task remains active; final whitespace check passes. Resume the unresolved exact ABI/guard-window/GL-thread/consent/lifetime/response-fence work from preserved scratch, not from nonexistent follow-up reports.
+
+### HANDOFF ACCEPTED — 2026-11-21 (Antigravity continuation)
+
+- Read Raspberry's `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `docs/{patches,build,security}.md`, Cherry's `.agents/CONTRACT.md` (read-only), and both private reports (`java-reauth-design.md`, `android-reauth-spec.md`).
+- Verified Git: `main` / `origin/main` at `508e23a`. Preserving uncommitted reviewed Windows IPA privacy fix (including untracked `internal/ipa/package_private_{unix,windows}.go`, `internal/ipa/package_private_windows_test.go`), unrelated `.claude/settings.json`, and zero-diff LF-normalized Go files. No commit or push.
+- Verified current resources: `emulator-5559` reports AVD `Raspberry` via `emu avd name`; `ida-mcp list_databases` reports 0 open instances; preserved scratch directory contains extracted both-ABI `libgame.so` copies and scratch `.i64` databases. No Cherry/archive mutation, no device action.
+- Next: dispatch two disjoint `reverse-engineer` follow-ups (`android-guest-reentry-spec.md` and `android-reset-dispatch-spec.md`) on separate scratch copies (never Cherry's pristine DB) to resolve the exact both-ABI bridge, fresh-code injection, GL-thread/consent-ready continuation, and response-dispatch/reset-fence seams before choosing an implementation.
+- **Static RE completed (2026-11-21):** both private reports (`android-guest-reentry-spec.md` and `android-reset-dispatch-spec.md`) written under `C:\Users\fes\AppData\Local\Temp\opencode\raspberry\android-reauth-20261121\`; all IDA leases closed without saving (`list_databases` = 0).
+- **Android re-auth implemented & host/package-gated (2026-11-21):**
+  - Patch tables & decoded semantic tests (`patches/libgame-{arm64,armv7}.tbl`, `internal/patch/{guest_autoentry_table_test.go,reauth_table_test.go,table_test.go}`): 9 edits per ABI (PHDR RX-tail expansion, Slot 0 `ReqAccessTokenForGuest`, Slot 1 `SetVisibleLoginBtn`, Slot 2 in-place `createGuestAccount`), verified against locked scratch `libgame.so` copies and full ARM64/Thumb-2 machine-code decoders.
+  - Native layer (`native/{reauth.h,reauth.c,reauth_test.c,reauth_android.c,hook.c,jni.c}`, `scripts/build-native.ps1`): pure C11 closed 4-trigger classifier + wrap-safe tx-watermark fence + 9 `.data.rel.ro` vtable hooks + 3 `.bss`-tail slots + JNI bridge (`nativeSetAuthUuid`, `nativeOnReauthComplete`, `onResetRequested`).
+  - Java layer (`android/src/dev/raspberry/core/ReauthState.java`, `Raspberry.java`, `android/host-test/dev/raspberry/core/CoreTest.java`): monotonic reset epoch fencing, checked 3-key pref + `files/avcookie.na` cleanup, resume-latched Discord dialog, zero `classes3.dex` changes.
+  - Main-reviewed full diff and passed: `scripts/gate.ps1`, `go test -race -count=1 ./...` (all 8 packages), `android/host-test.ps1`, `scripts/build-{dex,dexpatch,native}.ps1`, `git diff --check`, and deterministic signed APK A/B pair (`pkg-det/{a,b}/raspberry-lineplay-10.1.0.0.apk`, SHA-256 `1c38aa909a6721f31657a893eb4dda51d63bf1b1f6e34c2612c5586ab97026c5`).
+  - **Live device check — `checkSession` 404 PASSED (2026-11-21):** built same-signer live-peer APK (`pkg-live/raspberry-lineplay-10.1.0.0.apk`, SHA-256 `d6d9b8f8bc2196d35d0b0ba8645b9f4a533cd42cc3e3adb29e9428f83abdfe08`, signer `b4e2c696...`) using the authorized client signing key, installed in place on AVD `Raspberry` (`emulator-5559`, preserving app data/assets). Launch loaded `libraspberry.so` cleanly (`PID 3975`), caught the revoked session's `checkSession` HTTP 404, suppressed legacy login UI, removed `files/avcookie.na` (345 B -> absent) and the 3 auth prefs (`1219 B -> 1007 B`, `raspberry.discord` absent), and displayed the noncancelable `"Discord sign-in"` dialog (`dev-check/launch-12s.png`, `dev-check/launch-22s.png`, both spot-checked by main; crash buffer empty, zero AA dialogs).
+  - **Remaining manual/live checks:** tap `"Discord"` on AVD `Raspberry` to verify fresh OAuth → same-process auto-guest re-entry to Garden, then verify Logout → Discord, Delete Avatar (disposable identity), and refused `guest/generate` 400. No commit or push yet.
+
+## Previous handoff — 2026-11-21 (iOS re-auth delivered; superseded)
 
 Receiving agent: read all four `.agents/` files, `docs/ios.md`, `docs/patches.md`, and Cherry's server contract (read-only: `/Users/festivity/dev/Cherry/.agents/CONTRACT.md` on this Mac, or its Windows equivalent). Append **HANDOFF ACCEPTED** after verifying Git and current device state. This block supersedes the older intake snapshot below.
 
@@ -39,6 +138,19 @@ Receiving agent: read all four `.agents/` files, `docs/ios.md`, `docs/patches.md
 User explicitly requests commit and push when green. The delivery commit should contain only reviewed own code/tests/docs and this handoff, not private IPAs/dylibs/logs/keys. Check `git log -1`, status and upstream to determine the actual delivered hash; do not rely on this pre-commit snapshot. Future commits still require the user's direction for their scope.
 
 **Final delivery checks (2026-11-21):** full `scripts/gate.sh`, uncached race tests for the CLI, all `internal/...` packages and stub, strict iOS runtime SDK build, and `git diff --check` pass. Locked-real-executable IPA race tests and independent corrected-package review also passed earlier in the same slice. No fresh device action for handoff. Delete Avatar and the other untested error paths are not represented as green device acceptance.
+
+### HANDOFF ACCEPTED — 2026-11-21 (Windows Android continuation)
+
+- Read Raspberry's four context files, patch inventory/iOS checkpoint and Cherry's current server context/contract, read-only. Git is on `main` at delivered `508e23a`, level with `origin/main`; existing `.claude/settings.json` modification is unrelated and will remain untouched.
+- Verified attached `emulator-5559` reports AVD **Raspberry**. Another transport, `emulator-5558`, is offline and was left alone. The game PID query returned no PID; no launch, UI input, install, credential read or data change occurred.
+- Resuming Android equivalent re-auth, not more iOS work. iOS Delete Avatar remains unverified pending the user's result. Static Android reset/response/consent/cache seams and a separate own Java lifecycle/storage design are delegated to disjoint private reports under `%TEMP%\opencode\raspberry\android-reauth-20261121\`; no implementation or device acceptance yet.
+- Windows host gate stopped at formatting: checked files have LF in Git and CRLF in the checkout. Worker is normalizing only the listed Go files, with no semantic changes intended, before another gate. Cherry and both archives remain untouched; no tool installation or commit/push.
+- Baseline Android host tests, D8 build, DEX semantic selftest and both native ABI builds pass; the APK hash matches the lock. The uncached full race suite fails two IPA output-permission assertions on Windows (`0666` versus Unix `0600`); all other packages pass. A separate worker owns the narrow package/privacy portability investigation and regressions, not Android runtime changes. Do not skip security checks merely to make the gate green.
+- Java integration mapping is complete in private `android-reauth-20261121/java-reauth-design.md`: the existing gate runs only before engine initialization, so it cannot simply be rerun to resume a live native guest flow. A verified credential-cache refresh and engine-thread continuation (or separately validated relaunch design) remain native prerequisites; no speculative bridge is implemented. Requested Go newline normalization completed with an empty Git content diff.
+- Read-only tester preflight reconfirmed Raspberry/`emulator-5559`, 1290×2796 and an installed package; PID query returned none. Version/signer/foreground/Phone permission were not established by the attempted queries. Report-directory creation was refused by the shell scanner, so the tester stopped without retrying through another tool; results are in its session reply, not a saved report. No launch, input, install, permission or account action occurred.
+- Main reviewed the Windows IPA privacy fix: native protected current-user DACL at file creation, pre-write/published verification, identity checks around no-replace linking, and identity-gated cleanup. Follow-up removed duplicate cleanup code and added substituted-path coverage. Worker targeted vet/race and Darwin test cross-compile pass; main full Windows gate and uncached race reruns are active. No macOS runtime rerun or Android payload change from this host-only fix.
+- Main reruns now pass: full Windows `scripts/gate.ps1`, uncached `go test -race -count=1 ./...` (all eight packages) and `git diff --check`. Android baseline core/D8/DEX/both-ABI builds passed earlier. The host-only privacy fix is reviewed/gated but uncommitted; native Android re-auth research is still active, with no runtime implementation or acceptance.
+- Initial native report `android-reauth-spec.md` confirms both-ABI trigger IDs and that Logout leaves the device-UUID cache intact; it is not an implementation-ready bridge specification. Follow-ups have disjoint ownership: `android-guest-reentry-spec.md` (fresh guest-builder argument, engine-thread/consent-ready continuation) and `android-reset-dispatch-spec.md` (exact response identity/status and stale-response fencing). No global telemetry identity replacement, speculative restart, runtime executable write or account action is authorized by these static tasks.
 
 ## Prior intake — 2026-11-21 (historical, superseded)
 

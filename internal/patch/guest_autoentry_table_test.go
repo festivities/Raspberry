@@ -12,7 +12,7 @@ import (
 
 func TestGuestAutoEntryTables(t *testing.T) {
 	arm64 := mustLoad(t, "patches/libgame-arm64.tbl")
-	if len(arm64.Edits) != 2 || len(arm64.Windows) != 2 {
+	if len(arm64.Edits) != 9 || len(arm64.Windows) != 9 {
 		t.Fatalf("arm64 edits/windows = %d/%d", len(arm64.Edits), len(arm64.Windows))
 	}
 	assertTableEdit(t, arm64, 0x1ceef0c, "97e8fe17", "70f2fe17", "createGuestAccount")
@@ -21,7 +21,7 @@ func TestGuestAutoEntryTables(t *testing.T) {
 	assertTableWindow(t, arm64, 0x1ceef00, "f35341a9f55b42a9fd7bc3a8")
 
 	armv7 := mustLoad(t, "patches/libgame-armv7.tbl")
-	if len(armv7.Edits) != 2 || len(armv7.Windows) != 3 {
+	if len(armv7.Edits) != 9 || len(armv7.Windows) != 10 {
 		t.Fatalf("armv7 edits/windows = %d/%d", len(armv7.Edits), len(armv7.Windows))
 	}
 	assertTableEdit(t, armv7, 0x127a930, "e9f792bc", "eaf74cbe", "createGuestAccount")

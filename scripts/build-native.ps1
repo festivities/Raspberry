@@ -22,7 +22,9 @@ if (-not (Test-Path -LiteralPath $clang)) {
 $src = @(
     (Join-Path $root 'native\jni.c'),
     (Join-Path $root 'native\hook.c'),
-    (Join-Path $root 'native\endpoint.c')
+    (Join-Path $root 'native\endpoint.c'),
+    (Join-Path $root 'native\reauth.c'),
+    (Join-Path $root 'native\reauth_android.c')
 )
 foreach ($abi in @('arm64-v8a', 'armeabi-v7a')) {
     $target = $(if ($abi -eq 'arm64-v8a') { 'aarch64-linux-android23' } else { 'armv7a-linux-androideabi23' })

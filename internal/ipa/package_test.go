@@ -280,12 +280,8 @@ func TestWritePackageAtomicCreatesPrivateFileAndRefusesOverwriteAndSymlink(t *te
 	if !bytes.Equal(got, data) {
 		t.Fatal("published bytes differ")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("published mode=%#o, want 0600", info.Mode().Perm())
+	if err := verifyPrivateFile(path); err != nil {
+		t.Fatalf("published output is not private: %v", err)
 	}
 	if err := WritePackageAtomic(path, []byte("replacement")); err == nil {
 		t.Fatal("existing output was overwritten")
@@ -327,6 +323,59 @@ func TestWritePackageAtomicCreatesPrivateFileAndRefusesOverwriteAndSymlink(t *te
 	}
 	if err := WritePackageAtomic(filepath.Join(dir, "empty.ipa"), nil); err == nil {
 		t.Fatal("empty data was accepted")
+	}
+}
+
+func TestCreatePrivateTempIsPrivateBeforeFirstWrite(t *testing.T) {
+	tmp, err := createPrivateTemp(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+
+	info, err := tmp.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("private temporary file has %d bytes before first write", info.Size())
+	}
+	if err := verifyPrivateFile(tmp.Name()); err != nil {
+		t.Fatalf("temporary file is not private before first write: %v", err)
+	}
+}
+
+func TestVerifyFileIdentityRejectsSubstitutedPath(t *testing.T) {
+	dir := t.TempDir()
+	original, err := os.CreateTemp(dir, "original-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := original.Name()
+	info, err := original.Stat()
+	if err != nil {
+		original.Close()
+		t.Fatal(err)
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFileIdentity(path, info); err != nil {
+		t.Fatalf("same file identity rejected: %v", err)
+	}
+	backup := filepath.Join(dir, "original-held-open")
+	if err := os.Rename(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFileIdentity(path, info); err == nil {
+		t.Fatal("renamed original still passed identity check at its old path")
+	}
+	if err := os.WriteFile(path, []byte("substituted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFileIdentity(path, info); err == nil {
+		t.Fatal("substituted path passed the original file identity check")
 	}
 }
 

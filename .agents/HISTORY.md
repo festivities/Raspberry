@@ -2,6 +2,14 @@
 
 Dated evidence, superseded snapshots, investigations and old handoff pairs, kept verbatim. This file never overrides [AGENTS.md](AGENTS.md), [PLAN.md](PLAN.md) or [CONTRACT.md](CONTRACT.md). Newest section last. Move an INITIATED/ACCEPTED pair here from PLAN once it is accepted and superseded.
 
+## 2026-11-21 — Windows Android intake and host portability correction
+
+- Accepted `508e23a` on Windows, read Cherry's server contract read-only and resumed Android reset/re-auth research. No Android code/table/payload change or deployment; no account/UI action.
+- Private Java/native reports establish the startup-only gate and retained native guest-UUID cache. Concrete guest-reentry and reset-dispatch follow-ups were stopped at the user's handoff request, not accepted as implementations.
+- Baseline Windows gate found CRLF checkout noise and Unix-only IPA output-permission assumptions. Scoped LF normalization made no content diff. Main-reviewed native Windows owner-only ACL creation/verification and identity-checked publication fix passes the full Windows gate and all eight uncached race-test packages. Android core/D8/DEX/both-ABI baseline checks pass; Darwin tests cross-compile only.
+- Read-only AVD checks confirmed Raspberry, screen size and installed package; other preflight fields were incomplete. Tester stopped on a shell refusal, with no workaround or device change.
+- User requests immediate agent switch, context preparation and **no commit/push**. Newest PLAN handoff owns exact file inventory, private report pointers, resource stop/closure status and remaining work.
+
 ## 2026-11-21 — iOS re-auth continuation outcome
 
 - Accepted the `eee31aa` handoff and completed iOS re-auth runtime/packager integration. Runtime review corrected duplicate cleanup, stale queued entries, transient-error classification and consent-ready 404 sequencing.

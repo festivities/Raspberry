@@ -53,6 +53,8 @@ Always align **before** signing. The existing tools verified the pristine APK's 
 
 Signing keys and APK outputs must be outside every repository. Two private combined builds were byte-identical after signing. The retained compressed payloads matched the baseline, with exactly the documented replacements/additions and signing-metadata changes. Signing publishes with a no-replace hard link; filesystems that cannot hard-link fail closed.
 
+The IPA writer also publishes without replacement. Unix output uses mode `0600`; Windows creates the temporary file with a protected current-user-only DACL before writing any package bytes, then verifies privacy and file identity before/after publication. Windows mode bits are not evidence of ACL privacy. Host regressions cover private temporary/published files, broad-ACL rejection and substituted file identities; this does not remove operating-system administrator privileges.
+
 ## Python
 
 Never use global host Python for this project. Create a repository-local `.venv` before running host Python, including standard-library scripts; `.venv/` is ignored. Invoke `.venv/bin/python` on macOS or `.venv\Scripts\python.exe` on Windows. Ask before installing Python packages or other tools. IDAPython runs inside IDA.

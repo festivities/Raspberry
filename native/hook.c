@@ -400,15 +400,18 @@ static const char *basename_of(const char *path) {
     return s;
 }
 
-struct game_image {
+struct rb_game_image {
     int count;
     uintptr_t base;
     ElfW(Phdr) phdr[32];
     ElfW(Half) phnum;
 };
 
+int rb_reauth_install(const struct rb_game_image *g);
+void rb_reauth_rollback(const struct rb_game_image *g);
+
 static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
-    struct game_image *g = data;
+    struct rb_game_image *g = data;
     const char *base;
     (void)size;
     if (!info || !info->dlpi_name) {
@@ -429,7 +432,7 @@ static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
     return 0;
 }
 
-static int in_load(const struct game_image *g, uintptr_t slot) {
+static int in_load(const struct rb_game_image *g, uintptr_t slot) {
     ElfW(Half) i;
     for (i = 0; i < g->phnum; i++) {
         uintptr_t lo;
@@ -535,7 +538,161 @@ static int page_set(uintptr_t page, long ps, int prot) {
     return mprotect((void *)page, (size_t)ps, prot);
 }
 
-static int install_slots(const struct game_image *g) {
+static int valid_pagesize(long *out_ps) {
+    long ps = sysconf(_SC_PAGESIZE);
+    if (ps < 4096 || (ps & (ps - 1)) != 0) {
+        return -1;
+    }
+    *out_ps = ps;
+    return 0;
+}
+
+uintptr_t rb_game_base(const struct rb_game_image *g) {
+    return g ? g->base : 0u;
+}
+
+int rb_game_in_rx(const struct rb_game_image *g, uintptr_t addr, size_t width) {
+    ElfW(Half) i;
+    int prot = 0;
+    if (!g || width == 0) {
+        return 0;
+    }
+    for (i = 0; i < g->phnum; i++) {
+        uintptr_t lo;
+        uintptr_t hi;
+        if (g->phdr[i].p_type != PT_LOAD) {
+            continue;
+        }
+        if ((g->phdr[i].p_flags & (PF_R | PF_W | PF_X)) != (PF_R | PF_X)) {
+            continue;
+        }
+        if ((uintptr_t)g->phdr[i].p_vaddr > UINTPTR_MAX - g->base) {
+            continue;
+        }
+        lo = g->base + (uintptr_t)g->phdr[i].p_vaddr;
+        if ((uintptr_t)g->phdr[i].p_memsz > UINTPTR_MAX - lo) {
+            continue;
+        }
+        hi = lo + (uintptr_t)g->phdr[i].p_memsz;
+        if (rb_span_inside(lo, hi, addr, width)) {
+            if (prot_at(addr, &prot) != 0) {
+                return 0;
+            }
+            return (prot & (PROT_READ | PROT_EXEC)) == (PROT_READ | PROT_EXEC) &&
+                   (prot & PROT_WRITE) == 0;
+        }
+    }
+    return 0;
+}
+
+int rb_game_in_bss_tail(const struct rb_game_image *g, uintptr_t addr, size_t width) {
+    long ps;
+    ElfW(Half) i;
+    int prot = 0;
+    if (!g || width == 0 || (addr % sizeof(void *)) != 0 || valid_pagesize(&ps) != 0) {
+        return 0;
+    }
+    for (i = 0; i < g->phnum; i++) {
+        uintptr_t lo;
+        uintptr_t seg_end;
+        uintptr_t page_end;
+        if (g->phdr[i].p_type != PT_LOAD) {
+            continue;
+        }
+        if ((g->phdr[i].p_flags & (PF_R | PF_W | PF_X)) != (PF_R | PF_W)) {
+            continue;
+        }
+        if ((uintptr_t)g->phdr[i].p_vaddr > UINTPTR_MAX - g->base) {
+            continue;
+        }
+        lo = g->base + (uintptr_t)g->phdr[i].p_vaddr;
+        if ((uintptr_t)g->phdr[i].p_memsz > UINTPTR_MAX - lo) {
+            continue;
+        }
+        seg_end = lo + (uintptr_t)g->phdr[i].p_memsz;
+        if ((uintptr_t)ps - 1u > UINTPTR_MAX - seg_end) {
+            continue;
+        }
+        page_end = (seg_end + (uintptr_t)ps - 1u) & ~((uintptr_t)ps - 1u);
+        if (rb_span_inside(seg_end, page_end, addr, width)) {
+            if (prot_at(addr, &prot) != 0) {
+                return 0;
+            }
+            return (prot & (PROT_READ | PROT_WRITE)) == (PROT_READ | PROT_WRITE) &&
+                   (prot & PROT_EXEC) == 0;
+        }
+    }
+    return 0;
+}
+
+int rb_validate_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, void *expect_val) {
+    long ps;
+    uintptr_t addr;
+    uintptr_t page;
+    int old = 0;
+    void *cur;
+    if (!g || slot_va > UINTPTR_MAX - g->base || valid_pagesize(&ps) != 0) {
+        return -1;
+    }
+    addr = g->base + slot_va;
+    if ((addr % sizeof(void *)) != 0 || !in_load(g, addr)) {
+        return -1;
+    }
+    page = addr & ~((uintptr_t)ps - 1u);
+    if ((uintptr_t)ps > UINTPTR_MAX - page ||
+        !rb_span_inside(page, page + (uintptr_t)ps, addr, sizeof(void *))) {
+        return -1;
+    }
+    if (prot_at(addr, &old) != 0 || (old & PROT_READ) == 0 || (old & PROT_EXEC) != 0) {
+        return -1;
+    }
+    cur = __atomic_load_n((void **)addr, __ATOMIC_ACQUIRE);
+    return cur == expect_val ? 0 : -1;
+}
+
+int rb_patch_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, void *expect_val, void *new_val) {
+    long ps;
+    uintptr_t addr;
+    uintptr_t page;
+    int old = 0;
+    void *cur;
+    if (!g || !new_val || slot_va > UINTPTR_MAX - g->base || valid_pagesize(&ps) != 0) {
+        return -1;
+    }
+    addr = g->base + slot_va;
+    if ((addr % sizeof(void *)) != 0 || !in_load(g, addr)) {
+        return -1;
+    }
+    page = addr & ~((uintptr_t)ps - 1u);
+    if ((uintptr_t)ps > UINTPTR_MAX - page ||
+        !rb_span_inside(page, page + (uintptr_t)ps, addr, sizeof(void *))) {
+        return -1;
+    }
+    if (prot_at(addr, &old) != 0 || (old & PROT_READ) == 0 || (old & PROT_EXEC) != 0) {
+        return -1;
+    }
+    cur = __atomic_load_n((void **)addr, __ATOMIC_ACQUIRE);
+    if (cur != expect_val) {
+        return -1;
+    }
+    if (page_set(page, ps, old | PROT_WRITE) != 0) {
+        return -1;
+    }
+    cur = __atomic_load_n((void **)addr, __ATOMIC_ACQUIRE);
+    if (cur != expect_val) {
+        (void)page_set(page, ps, old);
+        return -1;
+    }
+    __atomic_store_n((void **)addr, new_val, __ATOMIC_RELEASE);
+    if (page_set(page, ps, old) != 0) {
+        __atomic_store_n((void **)addr, expect_val, __ATOMIC_RELEASE);
+        (void)page_set(page, ps, old);
+        return -1;
+    }
+    return 0;
+}
+
+static int install_slots(const struct rb_game_image *g) {
     void *hook[SLOT_N];
     void *expect[SLOT_N];
     uintptr_t slot[SLOT_N];
@@ -545,8 +702,7 @@ static int install_slots(const struct game_image *g) {
     int write_prot;
     long ps;
     int i;
-    ps = sysconf(_SC_PAGESIZE);
-    if (ps < 4096 || (ps & (ps - 1)) != 0) {
+    if (valid_pagesize(&ps) != 0) {
         rb_stage("got");
         return -1;
     }
@@ -636,7 +792,7 @@ static int install_slots(const struct game_image *g) {
 }
 
 int rb_install(const rb_config *cfg) {
-    struct game_image image;
+    struct rb_game_image image;
     int zero = 0;
     int rc;
     int publish = 0;
@@ -656,7 +812,15 @@ int rb_install(const rb_config *cfg) {
         rb_stage("module");
         rc = -1;
     } else {
-        rc = install_slots(&image);
+        rc = rb_reauth_install(&image);
+        if (rc != 0) {
+            rb_stage("reauth");
+        } else {
+            rc = install_slots(&image);
+            if (rc != 0) {
+                rb_reauth_rollback(&image);
+            }
+        }
     }
     next = rb_install_finish(rc == 0, &publish);
     if (!publish) {

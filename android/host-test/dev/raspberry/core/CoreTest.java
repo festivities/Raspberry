@@ -34,6 +34,7 @@ public final class CoreTest {
         pin();
         exchangeBody();
         sessionCookie();
+        reauthState();
         if (fails != 0) {
             System.err.println("FAILED " + fails);
             System.exit(1);
@@ -652,6 +653,159 @@ public final class CoreTest {
             if (dir != null) {
                 dir.delete();
             }
+        }
+    }
+
+    private static void reauthState() {
+        check(ReauthState.validReason(ReauthState.REASON_LOGOUT), "reauth-reason-logout");
+        check(ReauthState.validReason(ReauthState.REASON_DELETE_AVATAR), "reauth-reason-delete");
+        check(ReauthState.validReason(ReauthState.REASON_CHECK_SESSION_404), "reauth-reason-404");
+        check(ReauthState.validReason(ReauthState.REASON_GUEST_400), "reauth-reason-400");
+        check(!ReauthState.validReason(0), "reauth-reason-0");
+        check(!ReauthState.validReason(-1), "reauth-reason-neg");
+        check(!ReauthState.validReason(5), "reauth-reason-5");
+        check(!ReauthState.validReason(99), "reauth-reason-99");
+
+        ReauthState state = new ReauthState();
+        check(state.currentEpoch() == 0 && !state.isRequired() && !state.isCleanupVerified(), "reauth-init");
+        check(state.canStartAuth(), "reauth-init-can-start");
+        check(state.canCommit(0) && !state.canCommit(1), "reauth-init-commit");
+        check(!state.completeReauth(0), "reauth-init-no-complete");
+
+        check(!state.beginReset(0, ReauthState.REASON_LOGOUT), "reauth-epoch-0-rejected");
+        check(!state.beginReset(-5, ReauthState.REASON_LOGOUT), "reauth-epoch-neg-rejected");
+        check(!state.beginReset(1, 0), "reauth-bad-reason-0");
+        check(!state.beginReset(1, 5), "reauth-bad-reason-5");
+        check(state.currentEpoch() == 0 && !state.isRequired(), "reauth-invalid-preserves-init");
+
+        check(state.beginReset(1, ReauthState.REASON_LOGOUT), "reauth-reset-1");
+        check(state.currentEpoch() == 1 && state.isRequired() && !state.isCleanupVerified(), "reauth-reset-1-latched");
+        check(!state.canStartAuth(), "reauth-blocks-before-cleanup");
+        check(!state.canCommit(0), "reauth-fences-epoch-0");
+        check(state.canCommit(1), "reauth-allows-epoch-1");
+        check(!state.completeReauth(1), "reauth-refuses-unverified-cleanup");
+
+        check(!state.beginReset(1, ReauthState.REASON_DELETE_AVATAR), "reauth-duplicate-epoch-ignored");
+        check(!state.beginReset(0, ReauthState.REASON_LOGOUT), "reauth-stale-epoch-ignored");
+        check(!state.markCleanupResult(2, true), "reauth-cleanup-wrong-epoch");
+        check(!state.markCleanupResult(0, true), "reauth-cleanup-zero-epoch");
+        check(!state.canStartAuth(), "reauth-still-blocked");
+
+        check(state.markCleanupResult(1, false), "reauth-cleanup-false-recorded");
+        check(!state.isCleanupVerified() && !state.canStartAuth(), "reauth-cleanup-false-blocks");
+        check(!state.completeReauth(1), "reauth-cleanup-false-no-complete");
+
+        check(state.markCleanupResult(1, true), "reauth-cleanup-true");
+        check(state.isCleanupVerified() && state.canStartAuth(), "reauth-cleanup-unblocks");
+        check(!state.completeReauth(0), "reauth-complete-wrong-epoch");
+        check(state.isRequired(), "reauth-still-required-after-mismatch");
+
+        // Repeated reset idempotence: reset 2 invalidates reset 1's cleanup and exchange.
+        check(state.beginReset(2, ReauthState.REASON_CHECK_SESSION_404), "reauth-reset-2");
+        check(state.currentEpoch() == 2 && state.isRequired() && !state.isCleanupVerified(), "reauth-reset-2-clears-cleanup");
+        check(!state.canStartAuth(), "reauth-reset-2-blocks-start");
+        check(!state.canCommit(1), "reauth-reset-2-fences-1");
+        check(!state.markCleanupResult(1, true), "reauth-late-cleanup-1-ignored");
+        check(!state.isCleanupVerified(), "reauth-late-cleanup-1-no-effect");
+        check(state.markCleanupResult(2, true), "reauth-cleanup-2");
+        check(!state.completeReauth(1), "reauth-complete-1-refused-after-2");
+        check(state.completeReauth(2), "reauth-complete-2");
+        check(!state.isRequired(), "reauth-cleared-after-complete");
+        check(!state.completeReauth(2), "reauth-complete-once-only");
+
+        // Subsequent reset after completion advances monotonically.
+        check(state.beginReset(5, ReauthState.REASON_GUEST_400), "reauth-reset-5");
+        check(state.currentEpoch() == 5 && state.isRequired() && !state.isCleanupVerified(), "reauth-reset-5-state");
+        check(!state.canCommit(2), "reauth-reset-5-fences-2");
+        check(!state.markCleanupResult(2, true), "reauth-late-cleanup-2-ignored");
+
+        // Attempt + ReauthState race fencing: old attempt cannot store after reset.
+        ReauthState race = new ReauthState();
+        race.beginReset(1, ReauthState.REASON_LOGOUT);
+        race.markCleanupResult(1, true);
+        long capturedEpoch = race.currentEpoch();
+        Attempt attempt = new Attempt();
+        int gen = attempt.begin("abcdefghij123456", 1_000L);
+        check(attempt.onCallback(gen, callback("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "abcdefghij123456"), VERIFIER, 1_000L) == Attempt.EXCHANGE, "reauth-race-cb");
+        check(attempt.claimExchange(gen, 1_000L, true) != null, "reauth-race-claim");
+        check(race.beginReset(2, ReauthState.REASON_CHECK_SESSION_404), "reauth-race-reset-2");
+        int[] raceWrites = {0};
+        boolean committed = attempt.commit(gen, 1_000L, new Attempt.Writer() {
+            public boolean write() {
+                if (!race.canCommit(capturedEpoch)) {
+                    return false;
+                }
+                raceWrites[0]++;
+                return true;
+            }
+        });
+        check(!committed && raceWrites[0] == 0, "reauth-race-fenced-write");
+
+        // Narrow cleanup tests with fake AuthStore.
+        check(!ReauthState.clearNarrowly(null), "narrow-null-store");
+
+        FakeAuthStore cookieFails = new FakeAuthStore();
+        cookieFails.failCookie = true;
+        check(!ReauthState.clearNarrowly(cookieFails), "narrow-cookie-fail");
+        check(cookieFails.cookieCalls == 1 && cookieFails.prefsCalls == 1, "narrow-cookie-fail-still-checks-both");
+        check("keep".equals(cookieFails.prefs.get("notice_last_revision"))
+                && "keep".equals(cookieFails.prefs.get("endpoint_override")), "narrow-cookie-fail-preserves-unrelated");
+
+        FakeAuthStore prefsFail = new FakeAuthStore();
+        prefsFail.failPrefs = true;
+        check(!ReauthState.clearNarrowly(prefsFail), "narrow-prefs-fail");
+        check(prefsFail.cookieCalls == 1 && prefsFail.prefsCalls == 1, "narrow-prefs-fail-calls-both");
+
+        FakeAuthStore cleanOk = new FakeAuthStore();
+        check(ReauthState.clearNarrowly(cleanOk), "narrow-both-ok");
+        check(!cleanOk.cookiePresent, "narrow-cookie-cleared");
+        check(cleanOk.siblingCookiePresent, "narrow-sibling-file-preserved");
+        check(!cleanOk.prefs.containsKey("uuid")
+                && !cleanOk.prefs.containsKey("raspberry.discord")
+                && !cleanOk.prefs.containsKey("raspberry.discord.origin"), "narrow-auth-prefs-cleared");
+        check("keep".equals(cleanOk.prefs.get("notice_last_revision"))
+                && "keep".equals(cleanOk.prefs.get("endpoint_override"))
+                && "keep".equals(cleanOk.prefs.get("game_setting")), "narrow-unrelated-prefs-preserved");
+    }
+
+    private static final class FakeAuthStore implements ReauthState.AuthStore {
+        boolean cookiePresent = true;
+        boolean siblingCookiePresent = true;
+        boolean failCookie;
+        boolean failPrefs;
+        int cookieCalls;
+        int prefsCalls;
+        final Map<String, String> prefs = new HashMap<>();
+
+        FakeAuthStore() {
+            prefs.put("uuid", "550e8400-e29b-41d4-a716-446655440000");
+            prefs.put("raspberry.discord", "true");
+            prefs.put("raspberry.discord.origin", "https://cherry.example");
+            prefs.put("notice_last_revision", "keep");
+            prefs.put("endpoint_override", "keep");
+            prefs.put("game_setting", "keep");
+        }
+
+        public boolean clearCookie() {
+            cookieCalls++;
+            if (failCookie) {
+                return false;
+            }
+            cookiePresent = false;
+            return true;
+        }
+
+        public boolean clearPrefsAndVerify() {
+            prefsCalls++;
+            if (failPrefs) {
+                return false;
+            }
+            prefs.remove("uuid");
+            prefs.remove("raspberry.discord");
+            prefs.remove("raspberry.discord.origin");
+            return !prefs.containsKey("uuid")
+                    && !prefs.containsKey("raspberry.discord")
+                    && !prefs.containsKey("raspberry.discord.origin");
         }
     }
 

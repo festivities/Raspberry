@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -350,7 +351,8 @@ func TestIPAPatchRealBaselineIPA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows mode bits do not represent the DACL; internal/ipa verifies the published ACL.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("output mode=%#o, want 0600", info.Mode().Perm())
 	}
 

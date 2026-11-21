@@ -29,6 +29,7 @@ import dev.raspberry.core.NoticeMigration;
 import dev.raspberry.core.NoticeRewrite;
 import dev.raspberry.core.PinPolicy;
 import dev.raspberry.core.Pkce;
+import dev.raspberry.core.ReauthState;
 import dev.raspberry.core.SessionCookie;
 import dev.raspberry.core.UuidShape;
 import dev.raspberry.core.WebRewrite;
@@ -88,8 +89,10 @@ public final class Raspberry {
 
     // Main thread only: the attempt that owns the dialog, its listener, and the UI flags.
     private static final Attempt attempt = new Attempt();
+    private static final ReauthState reauth = new ReauthState();
     private static ServerSocket socket;
-    private static int liveGen;
+    private static volatile int liveGen;
+    private static long attemptResetEpoch;
     private static Activity attemptActivity;
     private static Activity resumedActivity;
     private static Application lifecycleApplication;
@@ -166,7 +169,7 @@ public final class Raspberry {
         if (liveGen != 0) {
             maybeStartExchange(liveGen);
         }
-        if (deviceUuid(activity).length() > 0) {
+        if (!reauth.isRequired() && deviceUuid(activity).length() > 0) {
             dismiss();
             return true;
         }
@@ -194,6 +197,10 @@ public final class Raspberry {
         }
         System.loadLibrary("raspberry");
         if (!installNative(endpoint.host(), endpoint.nativePorts())) {
+            throw new IllegalStateException("raspberry");
+        }
+        String initialUuid = deviceUuid(application);
+        if (initialUuid.length() == 0 || !nativeSetAuthUuid(initialUuid)) {
             throw new IllegalStateException("raspberry");
         }
         nativeInstalled = true;
@@ -369,6 +376,39 @@ public final class Raspberry {
     }
 
     private static native boolean installNative(String host, int[] ports);
+    private static native boolean nativeSetAuthUuid(String uuid);
+    private static native boolean nativeOnReauthComplete(long epoch, String uuid);
+
+    /** Native upcall for closed session/auth reset reasons. */
+    public static void onResetRequested(final long epoch, final int reason) {
+        if (!reauth.beginReset(epoch, reason)) {
+            return;
+        }
+        int gen = liveGen;
+        if (gen != 0) {
+            attempt.cancel(gen);
+        }
+        MAIN.post(new Runnable() {
+            public void run() {
+                if (reauth.currentEpoch() != epoch) {
+                    return;
+                }
+                abandon();
+                failed = false;
+                cancelled = false;
+                boolean cleaned = clearAuthStorage(app);
+                reauth.markCleanupResult(epoch, cleaned);
+                if (!cleaned) {
+                    logStep("reset-cleanup");
+                    failed = true;
+                }
+                Activity current = resumedActivity;
+                if (current != null && !current.isFinishing() && !current.isDestroyed()) {
+                    show(current);
+                }
+            }
+        });
+    }
 
     private static void capture(Context context) {
         if (context != null) {
@@ -390,6 +430,14 @@ public final class Raspberry {
                     resumedActivity = activity;
                     if (liveGen != 0) {
                         maybeStartExchange(liveGen);
+                    }
+                    if (reauth.isRequired() && activity != null && !activity.isFinishing() && !activity.isDestroyed()) {
+                        boolean showing = dialog != null && dialogActivity == activity && dialog.isShowing();
+                        if (!showing) {
+                            show(activity);
+                        } else {
+                            bindButtons();
+                        }
                     }
                 }
                 public void onActivityPaused(Activity activity) {
@@ -586,7 +634,7 @@ public final class Raspberry {
     }
 
     private static String statusText() {
-        if (config == 2) {
+        if (config == 2 || (reauth.isRequired() && !reauth.isCleanupVerified())) {
             return "Sign-in is unavailable.";
         }
         if (liveGen != 0 && attempt.live(liveGen, System.nanoTime())) {
@@ -616,6 +664,13 @@ public final class Raspberry {
             setStatus("Sign-in is unavailable.");
             return;
         }
+        if (!ensureCleanupForAuth(activity.getApplicationContext())) {
+            failed = true;
+            bindButtons();
+            setStatus("Sign-in is unavailable.");
+            return;
+        }
+        long resetEpoch = reauth.currentEpoch();
         ServerSocket ss = null;
         int gen = 0;
         boolean armed = false;
@@ -642,6 +697,7 @@ public final class Raspberry {
             ss.setSoTimeout(1000);
             socket = ss;
             liveGen = gen;
+            attemptResetEpoch = resetEpoch;
             attemptActivity = activity;
             // The loop owns the PKCE proof for this generation; no other thread can reach it.
             Thread thread = new Thread(acceptLoop(gen, ss, proof), "raspberry-cb");
@@ -668,6 +724,7 @@ public final class Raspberry {
                 if (liveGen == gen) {
                     liveGen = 0;
                     attemptActivity = null;
+                    attemptResetEpoch = 0;
                 }
             }
         }
@@ -776,6 +833,7 @@ public final class Raspberry {
             failed = true;
             liveGen = 0;
             attemptActivity = null;
+            attemptResetEpoch = 0;
             setStatus("Sign-in failed. Tap Retry.");
             bindButtons();
             return;
@@ -830,23 +888,46 @@ public final class Raspberry {
                 if (liveGen != gen) {
                     return; // cancelled, or a newer attempt owns the store
                 }
+                if (!reauth.canCommit(attemptResetEpoch)) {
+                    attempt.cancel(gen);
+                    liveGen = 0;
+                    attemptActivity = null;
+                    attemptResetEpoch = 0;
+                    return;
+                }
                 if (!ownerOpen()) {
                     attempt.cancel(gen);
                     liveGen = 0;
                     attemptActivity = null;
+                    attemptResetEpoch = 0;
                     return;
                 }
+                final long commitEpoch = attemptResetEpoch;
                 if (got != null && attempt.commit(gen, System.nanoTime(), new Attempt.Writer() {
                     public boolean write() {
                         // Re-read under the attempt lock. An earlier open check must not authorize.
-                        return ownerOpen() && store(got);
+                        return reauth.canCommit(commitEpoch) && ownerOpen() && store(got);
                     }
                 })) {
                     liveGen = 0;
                     attemptActivity = null;
-                    if (app != null && deviceUuid(app).length() > 0) {
-                        dismiss();
+                    attemptResetEpoch = 0;
+                    if (app == null || deviceUuid(app).length() == 0) {
+                        failed = true;
+                        bindButtons();
+                        return;
                     }
+                    if (reauth.isRequired()) {
+                        if (!reauth.canComplete(commitEpoch)
+                                || !nativeOnReauthComplete(commitEpoch, got)
+                                || !reauth.completeReauth(commitEpoch)) {
+                            logStep("reauth-complete");
+                            failed = true;
+                            bindButtons();
+                            return;
+                        }
+                    }
+                    dismiss();
                     return;
                 }
                 attempt.fail(gen);
@@ -896,7 +977,7 @@ public final class Raspberry {
             stored = false;
         }
         if (!stored) {
-            clearLogin(prefs);
+            clearLoginVerified(prefs);
             if (!logged) {
                 logStep("credential-store");
             }
@@ -905,16 +986,60 @@ public final class Raspberry {
         return true;
     }
 
-    private static void clearLogin(SharedPreferences prefs) {
+    private static boolean ensureCleanupForAuth(Context context) {
+        if (reauth.canStartAuth()) {
+            return true;
+        }
+        long epoch = reauth.currentEpoch();
+        boolean cleaned = clearAuthStorage(context);
+        reauth.markCleanupResult(epoch, cleaned);
+        if (!cleaned) {
+            logStep("reset-cleanup");
+        }
+        return reauth.canStartAuth();
+    }
+
+    private static boolean clearAuthStorage(final Context context) {
+        if (context == null) {
+            return false;
+        }
+        return ReauthState.clearNarrowly(new ReauthState.AuthStore() {
+            public boolean clearCookie() {
+                boolean ok = SessionCookie.clear(context.getFilesDir());
+                if (!ok) {
+                    logStep("cookie-clear");
+                }
+                return ok;
+            }
+
+            public boolean clearPrefsAndVerify() {
+                try {
+                    return clearLoginVerified(PreferenceManager.getDefaultSharedPreferences(context));
+                } catch (RuntimeException e) {
+                    logFailure("credential-clear", e);
+                    return false;
+                }
+            }
+        });
+    }
+
+    private static boolean clearLoginVerified(SharedPreferences prefs) {
+        if (prefs == null) {
+            return false;
+        }
         try {
             SharedPreferences.Editor ed = prefs.edit();
             ed.remove(PREF_UUID);
             ed.remove(PREF_ORIGIN);
-            ed.putBoolean(PREF_MARKER, false);
-            ed.commit();
+            ed.remove(PREF_MARKER);
+            return ed.commit()
+                    && !prefs.contains(PREF_UUID)
+                    && !prefs.contains(PREF_ORIGIN)
+                    && !prefs.getBoolean(PREF_MARKER, false);
         } catch (RuntimeException e) {
-            // a failed commit must not leave a login in memory
+            // a failed commit must not leave an unverified login in memory
             logFailure("credential-clear", e);
+            return false;
         }
     }
 
@@ -1121,6 +1246,7 @@ public final class Raspberry {
                 failed = true;
                 liveGen = 0;
                 attemptActivity = null;
+                attemptResetEpoch = 0;
                 setStatus("Sign-in failed. Tap Retry.");
                 bindButtons();
             }
@@ -1136,6 +1262,7 @@ public final class Raspberry {
         socket = null;
         liveGen = 0;
         attemptActivity = null;
+        attemptResetEpoch = 0;
         cancelled = false;
     }
 

@@ -195,7 +195,7 @@ func BuildPackage(sourceIPA, dylib, endpointJSONRaw []byte) (PackageResult, erro
 	}, nil
 }
 
-// WritePackageAtomic writes data to a 0600 temporary file inside path's
+// WritePackageAtomic writes data to an owner-only temporary file inside path's
 // directory and publishes it atomically without overwriting symlinks or any
 // existing destination file.
 func WritePackageAtomic(path string, data []byte) error {
@@ -222,22 +222,34 @@ func WritePackageAtomic(path string, data []byte) error {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(parent, ".raspberry-ipa-*.tmp")
+	tmp, err := createPrivateTemp(parent)
 	if err != nil {
 		return err
 	}
 	tempPath := tmp.Name()
+	tmpInfo, err := tmp.Stat()
+	if err != nil {
+		return cleanupPrivateTemp(tmp, err)
+	}
 	cleanup := true
+	published := false
 	defer func() {
 		if cleanup {
-			_ = os.Remove(tempPath)
+			if published {
+				if st, err := os.Lstat(path); err == nil && os.SameFile(tmpInfo, st) {
+					_ = os.Remove(path)
+				}
+			}
+			if st, err := os.Lstat(tempPath); err == nil && os.SameFile(tmpInfo, st) {
+				_ = os.Remove(tempPath)
+			}
 		}
 	}()
-	if _, err := tmp.Write(data); err != nil {
+	if err := verifyPrivateFile(tempPath); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("ipa: package: temporary file is not private: %w", err)
 	}
-	if err := tmp.Chmod(0o600); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -248,13 +260,67 @@ func WritePackageAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if err := verifyPrivateFile(tempPath); err != nil {
+		return fmt.Errorf("ipa: package: temporary file permissions changed: %w", err)
+	}
+	if err := verifyFileIdentity(tempPath, tmpInfo); err != nil {
+		return fmt.Errorf("ipa: package: temporary file changed before publication: %w", err)
+	}
 	if err := os.Link(tempPath, path); err != nil {
 		return err
+	}
+	published = true
+	if err := verifyFileIdentity(path, tmpInfo); err != nil {
+		return fmt.Errorf("ipa: package: published output is not the temporary file: %w", err)
+	}
+	if err := verifyPrivateFile(path); err != nil {
+		return fmt.Errorf("ipa: package: published file is not private: %w", err)
+	}
+	if st, err := os.Lstat(tempPath); err != nil || !os.SameFile(tmpInfo, st) {
+		if err != nil {
+			return fmt.Errorf("ipa: package: temporary file changed before publication cleanup: %w", err)
+		}
+		return errors.New("ipa: package: temporary file changed before publication cleanup")
 	}
 	if err := os.Remove(tempPath); err != nil {
 		return err
 	}
 	cleanup = false
+	return nil
+}
+
+func cleanupPrivateTemp(f *os.File, cause error) error {
+	path := f.Name()
+	info, statErr := f.Stat()
+	if statErr != nil {
+		cause = errors.Join(cause, statErr)
+	}
+	if err := f.Close(); err != nil {
+		cause = errors.Join(cause, err)
+	}
+	if statErr == nil {
+		if st, err := os.Lstat(path); err == nil && os.SameFile(info, st) {
+			if err := os.Remove(path); err != nil {
+				cause = errors.Join(cause, err)
+			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			cause = errors.Join(cause, err)
+		}
+	}
+	return cause
+}
+
+func verifyFileIdentity(path string, expected os.FileInfo) error {
+	if expected == nil {
+		return errors.New("ipa: package: expected file identity is unavailable")
+	}
+	actual, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(expected, actual) {
+		return errors.New("ipa: package: file identity changed")
+	}
 	return nil
 }
 

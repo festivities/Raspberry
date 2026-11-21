@@ -1,9 +1,33 @@
-# AirArmor state 6 only, plus no-cookie scene-ready guest auto-entry.
-# Tail replacement invokes the stock createGuestAccount action used by popup tag 13; it does not retarget provider LD_GUEST/tag 17.
+# AirArmor state 6, no-cookie scene-ready guest auto-entry, and re-auth hook trampolines.
+# Tail replacement invokes createGuestAccount (now a Slot 2 trampoline); it does not retarget provider LD_GUEST/tag 17.
 # Cookie and restore windows guard the existing relaunch path and frame recovery.
 # Offsets are uncompressed ELF file offsets, not APK zip offsets.
 id airarmor-state6-armv7
 sha256 8eadba34f30f971188f54010b9dcb5217f1000d2073911fed421edc646473ca7
+
+# Expand PT_LOAD[2] (R-X) from 0x2080674 to 0x2080700 to cover RX slack trampolines.
+window 0x74 01000000000000000000000000000000
+edit 0x84 74060802 00070802 PHDR[2].p_filesz to 0x2080700
+edit 0x88 74060802 00070802 PHDR[2].p_memsz to 0x2080700
+window 0x8c 0500000000100000
+
+# NaDispatcherCommon::ReqAccessTokenForGuest (0x11fd8d8) -> RX slack 0x2080690 -> Slot 0 (0x24b4400).
+window 0x11fd8d0 f613cb00af22cb00
+edit 0x11fd8d8 584b2de9f047 82f2da9600bf NaDispatcherCommon::ReqAccessTokenForGuest entry to RX slack 0x2080690
+window 0x11fd8de 8eb07b441b6802afd0f81c8007f12004
+edit 0x2080690 0000000000000000000000000000000000000000000000000000000000000000 43f6645cc0f2430cfc44dcf800c060474af6c053c0f202132de9f0477df51791 ReqAccessTokenForGuest Slot 0 trampoline and resume stub
+
+# NaLoginLayer::SetVisibleLoginBtn (0x1264258) -> RX slack 0x2080674 -> Slot 1 (0x24b4404).
+window 0x1264250 be91fc00b687fc00
+edit 0x1264258 2de9f041 1cf20c92 NaLoginLayer::SetVisibleLoginBtn entry to RX slack 0x2080674
+window 0x126425c 04462ded028b0e4682b0d0f8240100af
+edit 0x2080674 000000000000000000000000000000000000000000000000 43f6845cc0f2430cfc44dcf800c060472de9f041e3f5e895 SetVisibleLoginBtn Slot 1 trampoline and resume stub
+
+# NaStandAloneLoginPopup::createGuestAccount (0x12655cc) -> Slot 2 (0x24b4408) in-place trampoline.
+edit 0x12655cc 98b500af074b7b441b681c68d7f29cf3d7f2 4ef6306cc0f2241cfc44dcf800c0604700de NaStandAloneLoginPopup::createGuestAccount Slot 2 trampoline
+window 0x12655de 86f501462046bd46bde8984098f775b9
+
+# Existing SetEndLoading guest auto-entry and AirArmor state-6 edits.
 window 0x127a848 08b3
 window 0x127a926 20460121bd46bde8b040
 edit 0x127a930 e9f792bc eaf74cbe no-cookie non-COPPA SetEndLoading tail to createGuestAccount (popup tag 13)
