@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "endpoint.h"
+#include "resume_guard.h"
 
 #include <android/log.h>
 #include <arpa/inet.h>
@@ -489,7 +490,7 @@ static int parse_addr(const char **pp, uintptr_t *out) {
     return 1;
 }
 
-static int prot_at(uintptr_t addr, int *prot) {
+static int find_map_at(uintptr_t addr, uintptr_t *out_start, uintptr_t *out_end, int *out_prot) {
     FILE *f = fopen("/proc/self/maps", "re");
     char line[1024];
     if (!f) {
@@ -522,12 +523,24 @@ static int prot_at(uintptr_t addr, int *prot) {
         if (p[2] == 'x') {
             bits |= PROT_EXEC;
         }
-        *prot = bits;
+        if (out_start) {
+            *out_start = start;
+        }
+        if (out_end) {
+            *out_end = end;
+        }
+        if (out_prot) {
+            *out_prot = bits;
+        }
         fclose(f);
         return 0;
     }
     fclose(f);
     return -1;
+}
+
+static int prot_at(uintptr_t addr, int *prot) {
+    return find_map_at(addr, NULL, NULL, prot);
 }
 
 static void rb_stage(const char *id) {
@@ -551,38 +564,96 @@ uintptr_t rb_game_base(const struct rb_game_image *g) {
     return g ? g->base : 0u;
 }
 
-int rb_game_in_rx(const struct rb_game_image *g, uintptr_t addr, size_t width) {
+int rb_game_validate_resume_source(const struct rb_game_image *g,
+                                   uintptr_t tagged_rva,
+                                   int strip_thumb_bit,
+                                   uint64_t expected_file_off,
+                                   const uint8_t *expected_bytes,
+                                   size_t expected_len) {
+    rb_elf_load_seg segs[32];
+    rb_map_span map;
+    uintptr_t source_rva;
+    uintptr_t addr;
+    int raw_prot = 0;
+    int rb_prot = 0;
+    int rc;
     ElfW(Half) i;
-    int prot = 0;
-    if (!g || width == 0) {
+
+    if (!g || g->phnum == 0 || g->phnum > 32 || !expected_bytes || expected_len == 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map invalid-input");
         return 0;
     }
-    for (i = 0; i < g->phnum; i++) {
-        uintptr_t lo;
-        uintptr_t hi;
-        if (g->phdr[i].p_type != PT_LOAD) {
-            continue;
-        }
-        if ((g->phdr[i].p_flags & (PF_R | PF_W | PF_X)) != (PF_R | PF_X)) {
-            continue;
-        }
-        if ((uintptr_t)g->phdr[i].p_vaddr > UINTPTR_MAX - g->base) {
-            continue;
-        }
-        lo = g->base + (uintptr_t)g->phdr[i].p_vaddr;
-        if ((uintptr_t)g->phdr[i].p_memsz > UINTPTR_MAX - lo) {
-            continue;
-        }
-        hi = lo + (uintptr_t)g->phdr[i].p_memsz;
-        if (rb_span_inside(lo, hi, addr, width)) {
-            if (prot_at(addr, &prot) != 0) {
-                return 0;
-            }
-            return (prot & (PROT_READ | PROT_EXEC)) == (PROT_READ | PROT_EXEC) &&
-                   (prot & PROT_WRITE) == 0;
-        }
+    source_rva = rb_resume_strip_tag(tagged_rva, strip_thumb_bit);
+    if (source_rva > UINTPTR_MAX - g->base || (uintptr_t)expected_len > UINTPTR_MAX - (g->base + source_rva)) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map invalid-input");
+        return 0;
     }
-    return 0;
+    addr = g->base + source_rva;
+
+    for (i = 0; i < g->phnum; i++) {
+        uint32_t flags = 0u;
+        if (g->phdr[i].p_flags & PF_R) {
+            flags |= RB_PF_R;
+        }
+        if (g->phdr[i].p_flags & PF_W) {
+            flags |= RB_PF_W;
+        }
+        if (g->phdr[i].p_flags & PF_X) {
+            flags |= RB_PF_X;
+        }
+        segs[i].p_type = (g->phdr[i].p_type == PT_LOAD) ? RB_PT_LOAD : 0u;
+        segs[i].p_flags = flags;
+        segs[i].p_offset = (uint64_t)g->phdr[i].p_offset;
+        segs[i].p_vaddr = (uint64_t)g->phdr[i].p_vaddr;
+        segs[i].p_filesz = (uint64_t)g->phdr[i].p_filesz;
+        segs[i].p_memsz = (uint64_t)g->phdr[i].p_memsz;
+    }
+
+    if (find_map_at(addr, &map.start, &map.end, &raw_prot) != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map prot-unavailable");
+        return 0;
+    }
+    if (raw_prot & PROT_READ) {
+        rb_prot |= RB_PROT_READ;
+    }
+    if (raw_prot & PROT_WRITE) {
+        rb_prot |= RB_PROT_WRITE;
+    }
+    if (raw_prot & PROT_EXEC) {
+        rb_prot |= RB_PROT_EXEC;
+    }
+    map.prot = rb_prot;
+
+    rc = rb_validate_resume_layout(g->base, segs, (size_t)g->phnum, tagged_rva, strip_thumb_bit,
+                                   expected_file_off, &map, expected_len);
+    if (rc < 0) {
+        if (rc == RB_RESUME_ERR_ELF) {
+            __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map elf-guard");
+        } else if (rc == RB_RESUME_ERR_MAP) {
+            __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map source-map bits=%u prot=%d",
+                                (unsigned)(sizeof(void *) * 8u), raw_prot);
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map invalid-input");
+        }
+        return 0;
+    }
+
+    /* Full span is verified file-backed ELF RX and mapped readable/nonwritable; safe to inspect bytes. */
+    rc = rb_validate_resume_source(g->base, segs, (size_t)g->phnum, tagged_rva, strip_thumb_bit,
+                                   expected_file_off, &map, (const uint8_t *)addr, expected_bytes, expected_len);
+    if (rc == RB_RESUME_ERR_BYTES) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map byte-mismatch");
+        return 0;
+    }
+    if (rc < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "resume-map invalid-input");
+        return 0;
+    }
+    if (rc == RB_RESUME_OK_RO_SOURCE) {
+        __android_log_print(ANDROID_LOG_INFO, "raspberry", "resume-map source-nx bits=%u prot=%d",
+                            (unsigned)(sizeof(void *) * 8u), raw_prot);
+    }
+    return 1;
 }
 
 int rb_game_in_bss_tail(const struct rb_game_image *g, uintptr_t addr, size_t width) {
@@ -632,22 +703,44 @@ int rb_validate_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, voi
     int old = 0;
     void *cur;
     if (!g || slot_va > UINTPTR_MAX - g->base || valid_pagesize(&ps) != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "relro-slot invalid-input");
         return -1;
     }
     addr = g->base + slot_va;
     if ((addr % sizeof(void *)) != 0 || !in_load(g, addr)) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "relro-slot not-in-load");
         return -1;
     }
     page = addr & ~((uintptr_t)ps - 1u);
     if ((uintptr_t)ps > UINTPTR_MAX - page ||
         !rb_span_inside(page, page + (uintptr_t)ps, addr, sizeof(void *))) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "relro-slot page-span");
         return -1;
     }
-    if (prot_at(addr, &old) != 0 || (old & PROT_READ) == 0 || (old & PROT_EXEC) != 0) {
+    if (prot_at(addr, &old) != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "relro-slot prot-unavail");
+        return -1;
+    }
+    if ((old & PROT_READ) == 0 || (old & PROT_EXEC) != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry", "relro-slot bad-prot prot=%d", old);
         return -1;
     }
     cur = __atomic_load_n((void **)addr, __ATOMIC_ACQUIRE);
-    return cur == expect_val ? 0 : -1;
+    if (cur != expect_val) {
+        int cur_prot = -1;
+        int cur_mapped = (prot_at((uintptr_t)cur, &cur_prot) == 0) ? 1 : 0;
+        int cur_in_load = in_load(g, (uintptr_t)cur);
+        if (cur != NULL && !cur_in_load && cur_mapped &&
+            (cur_prot & (PROT_READ | PROT_EXEC)) == (PROT_READ | PROT_EXEC) &&
+            (cur_prot & PROT_WRITE) == 0) {
+            return 1;
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "raspberry",
+                            "relro-slot mismatch null=%d in_load=%d mapped=%d cur_prot=%d",
+                            cur == NULL ? 1 : 0, cur_in_load, cur_mapped, cur_prot);
+        return -1;
+    }
+    return 0;
 }
 
 int rb_patch_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, void *expect_val, void *new_val) {

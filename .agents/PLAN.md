@@ -1,5 +1,128 @@
 # Raspberry — Plan (PLAN.md)
 
+## HANDOFF INITIATED — 2026-11-22 (Android emulator startup fix delivered; WSA Garden user-verified)
+
+**Resume here. This supersedes every older handoff below.** Receiving agent with zero context: read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `README.md`, and `docs/{patches,build,usage,security}.md`. Check `git log -1`, `git status`, and `origin/main` to confirm the delivered commit (user authorized commit and push when all green), then append **HANDOFF ACCEPTED**. No background task, device command, capture, subagent or IDA lease is active. Cherry repo/services/data and both artifact archives remain read-only.
+
+### Delivered & user-verified (WSA Garden)
+
+1. **DEX format preservation (`tools/dexpatch/src/dev/raspberry/dexpatch/{Main,SelfTest}.java`):** `dexpatch` now derives opcodes from the input DEX header (`DexBackedDexFile(null, raw)`) and rejects format drift in `verify`, preserving stock `classes3.dex` format **035** instead of upgrading to 040 (Android 10+) despite `minSdk 23`. Synthetic API23/035 round-trip and 040-upgrade rejection tests plus real-baseline semantic/checksum checks pass.
+2. **Translated-source resume guard (`native/resume_guard.{h,c}`, `native/resume_guard_test.c`, `native/hook.c`, `native/reauth_android.c`, `scripts/build-native.ps1`, `internal/patch/reauth_table_test.go`):**
+   - WSA diagnostic logs (`20261122105713.log`) confirmed Intel Houdini maps guest ARM64 `.text` as `r--p` (`prot=1`), causing the old host-`PROT_EXEC` `rb_game_in_rx` check to fail closed.
+   - Replaced with `rb_game_validate_resume_source`: requires unique `libgame.so`, overflow-checked `PT_LOAD` with `PF_R|PF_X` (no `PF_W`), full file-backed (`p_filesz` and `p_memsz`) bounds matching the locked table file offset, a single `/proc/self/maps` span covering the full resume stub with `PROT_READ && !PROT_WRITE` (accepts `R-X` or `R--`; rejects `RW`, `RWX`, unreadable, partial or absent spans; never calls `mprotect` on code), and exact byte equality against the full pinned resume stub (8/8 B ARM64, 16/8 B ARMv7 with Thumb tag stripped only for range/read checks and preserved on callable function pointers).
+   - `TestReauthNativeResumeGuardsMatchTables` pins the C offsets and byte arrays directly to `patches/libgame-{arm64,armv7}.tbl`.
+3. **Houdini `VT_LOGIN_DTOR_D0` compatibility (`native/hook.c`, `native/reauth_android.c`):**
+   - WSA diagnostic logs (`20261122113100.log`, `20261122114357.log`, `20261122121040.log`, `20261122123023.log`) confirmed both resume stubs, vtable slots `idx=0..7`, all 3 `.bss` tail slots, and all 4 GOT slots match strictly, while only `idx=8` (`NaLoginLayer::~NaLoginLayer()` deleting destructor `D0` at `0x395cac8`) holds a pointer into Houdini's `[anon:Mem_0x10000001]` (`r-xp`, `prot=5`) region even though `dlsym("_ZN12NaLoginLayerD0Ev")` matches `base + 0x1ca8c70`.
+   - `rb_validate_relro_slot` returns `1` for an external mapped `R-X` (non-writable) pointer, and `rb_reauth_install` leaves **only** `VT_LOGIN_DTOR_D0` untouched (`reauth dtor-d0 external-rx skipped`) in that case while tracking patched slots (`g_vt_patched[]`) for clean rollback. Native ARM64 / AVD Raspberry still hooks `D0` normally when the slot equals `base + expect_va`.
+4. **User-verified WSA acceptance (2026-11-22):** user installed same-signer `wsa-fix-a\raspberry-lineplay-10.1.0.0.apk` (66,826,198 B, SHA-256 `4493cd775959a2cb8eab8bcd85cccce75fe427382c5e059619c2655fe420fe6b`, signer `80a0db2a…`, byte-identical to `wsa-fix-b`) on WSA and confirmed reaching live **Garden** with gameplay working.
+
+### Verification gates (all green before commit)
+
+- `scripts/build-native.ps1` (both `arm64-v8a` and `armeabi-v7a` `-Wall -Werror` + all 3 native host tests: `endpoint_test.c`, `reauth_test.c`, `resume_guard_test.c`)
+- `scripts/build-dexpatch.ps1` (including `SelfTest` DEX035 round-trip + 040-upgrade rejection)
+- `android/host-test.ps1`
+- `scripts/gate.ps1` (`gofmt`, `go vet`, `go test`, 3 native tests, `check-repo_test.ps1`, `check-repo.ps1`)
+- `go test -race -count=1 ./...` (all 8 packages uncached, including `TestReauthNativeResumeGuardsMatchTables`)
+- `git diff --check`
+
+### Open optional follow-ups (not blocking)
+
+1. **Other reported emulators (MuMu, BlueStacks, LDPlayer):** their causes were not separately captured; the DEX035 fix and Houdini/translator resume + `D0` fixes likely cover Houdini-based emulators too, but they remain unverified until users test or supply logs.
+2. **WSA re-auth flows:** Logout → Discord → Garden and Delete Avatar → Discord → avatar creation → Garden on WSA were not explicitly exercised yet (Garden launch is user-verified).
+3. **AVD `Raspberry` regression:** remember AVD `Raspberry` (`emulator-5559`) has installed signer `b4e2c696…`, which differs from the distribution signer `80a0db2a…`. Do not overwrite/uninstall it with a `80a0db2a…`-signed APK; build with its own authorized key if running an AVD regression.
+4. **Remaining v1 boundaries:** 32-bit `armeabi-v7a` Android runtime, refused `guest/generate` HTTP 400 UI, physical-phone Battery Saver `raspberry://auth` return, and stock native Android libcurl TLS (`docs/security.md`).
+
+### Private scratch pointers (never commit)
+
+- Scratch root: `C:\Users\fes\AppData\Local\Temp\opencode\raspberry\emulator-compat-20261122\`
+- User-verified WSA fix pair: `wsa-fix-{a,b}\raspberry-lineplay-10.1.0.0.apk` (SHA-256 `4493cd775959a2cb8eab8bcd85cccce75fe427382c5e059619c2655fe420fe6b`, signer `80a0db2a…`)
+- Preserved earlier diagnostic pairs: `diagnostic-{a,b}`, `resume-fix-{a,b}`, `vtslot-diag-{a,b}`, `vtslot-diag2-{a,b}`, `vtslot-diag3-{a,b}`
+- Matching distribution signing folder (read-only): `C:\Users\fes\AppData\Local\Temp\opencode\raspberry\dist-20261121\private\`
+- User WSA logs (read-only): `E:\Downloads\New folder (7)\20261122{105713,113100,114357,121040,123023}.log`
+
+## Prior handoff — 2026-11-22 (Android emulator startup; accepted and superseded)
+
+**Resume here. This supersedes every older handoff and the stale “active” statuses below.** User requests an immediate zero-context transfer: **do not commit or push**. Read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `docs/{patches,build,usage,security}.md` and README. Check Git, then append **HANDOFF ACCEPTED**. This session stopped implementation; no task, device command, capture or subagent is active. IDA inventory is empty. Continue the Android emulator issue, not the closed iOS keyboard work.
+
+### Goal, authorization and ownership
+
+- User's patched APK works on Raspberry AVD, but users report immediate exits on MuMu, BlueStacks, LDPlayer and Windows Subsystem for Android (WSA). A supplied **new diagnostic log now confirms the exact WSA failure condition**. The other emulator causes are not established.
+- User first reserved Raspberry AVD for Cherry's agent, then released it for our use. Latest instruction before this handoff stopped AVD work in favor of the new WSA log. **Do not resume a device test merely for handoff.** User explicitly authorized **main-agent RE and then main-agent device testing** because delegated work was too slow; no more subagents are needed to resume this investigation. Preserve all installed data, permissions and accounts.
+- Cherry repo/services/data and both artifact archives remain read-only. No tool/dependency installation without asking, no global Python, no Frida/ptrace in acceptance tests, no protection bypass. Private APKs/keys/logs/helper scripts must remain outside Git. Do not print passwords, endpoint values, auth URIs, cookies or credentials.
+
+### Git and exact uncommitted changes
+
+- `main` / `origin/main` tracking at **`35c7fb4`** (`docs: restyle README with logo, badges and support links`). Remote tip was checked earlier in this session and matched. **No commit/push or staging performed.**
+- Exactly seven tracked files modified: `.agents/{AGENTS,PLAN,CONTRACT}.md`, `docs/patches.md`, `native/hook.c`, `tools/dexpatch/src/dev/raspberry/dexpatch/{Main,SelfTest}.java`. All are this session's changes; no inherited user edits were present at intake.
+- **Native change is logging only:** five added lines in `rb_game_in_rx` report `resume-map invalid-input`, `no-rx-range`, `prot-unavailable`, or `resume-map bits=%u prot=%d`. Every condition and return is unchanged. **No WSA mapping compatibility fix has been implemented.**
+- **Actual DEX compatibility fix:** stock classes3 is DEX035; forcing `Opcodes.forApi(33)` in dexpatch caused the supplied APK to contain DEX040 (Android10+) despite minSdk23. `Main.java` now passes null opcodes to `DexBackedDexFile`, letting pinned dexlib infer the format from the input header, and `verify` rejects opcode/API-format drift. `SelfTest.java` uses an API23/035 fixture and tests format-preserving round-trip plus rejection of a synthetic 040 upgrade. No header-only downgrade or stock class/name/opcode edit.
+
+### Confirmed WSA cause — newest evidence
+
+- **Read this private log first:** `E:\Downloads\New folder (7)\20261122105713.log`. It is from the diagnostic build and contains the new numeric marker.
+- At **lines 9200–9203**, timestamp **11-22 18:58:24.320**: `raspberry: resume-map bits=64 prot=1` → `reauth rx` → `install reauth` → `wm_finish_activity ... app-request`. At line 9223 the same process logs its own SIGKILL.
+- **[V supplied log + S reviewed source] This resolves the prior range-versus-permission ambiguity:** the first ARM64 resume check at normalized `base + 0x384ffdc` passes executable ELF `PT_LOAD` range selection and `prot_at` succeeds, but reports **read-only, non-executable host mapping** (`PROT_READ=1`, `PROT_EXEC=4`, normal RX=5). `rb_game_in_rx` rejects it because it requires actual host execute permission. The second resume check is short-circuited and not measured by this log.
+- This is Raspberry's deliberate fail-closed exit before engine initialization, not a demonstrated native fault or AirArmor callback. The preceding legacy absolute-path `libgame.so not found` warning is not terminal: the installer subsequently resolves the game and reaches the mapping check.
+- WSA/Houdini ARM translation is established by the supplied captures. The new log establishes the observed read-only source mapping; it does **not** prove that the patched resume continuations are callable under translation or that later vtable/GOT/BSS guards will pass.
+- Earlier logs `20261121141437.log`, `20261121144713.log`, `20261121151614.log` contain 12 same-stage exits without permission details. Newer-named boot/settings logs `20261121210819.log` and `20261122061953.log` were not useful startup failures. System AppOps uid -1 errors/data clearing are unrelated evidence, not the app's crash.
+
+### Next implementation decision (not yet done)
+
+1. Main should review `native/hook.c::rb_game_in_rx`, its two callers in `native/reauth_android.c` (around lines 676–679), and private `mapping-design.md`. The likely compatibility correction is to validate **locked executable source** rather than assuming translated ARM source pages carry host `PROT_EXEC`.
+2. **Do not simply return true, accept arbitrary PT_LOAD/RW/RWX mappings, add execute permission, remove unrelated checks, or claim a blanket emulator bypass.** A candidate needs the exact image, ABI-specific fixed RVA, full file-backed ELF RX/non-W bounds, full readable/nonwritable live-map span, and pinned expected resume bytes. Keep RELRO/GOT/BSS/symbol guards and all stock protection untouched. Decide how to preserve callable-context safety: byte/read-only checks alone do not prove that a non-X address is callable on native hardware or under a particular translator. The private design is a proposal, not accepted code.
+3. New validation logic needs focused host regressions (native RX, translated R-- source, writable/unreadable/wrong bytes/range/overflow/partial-map/memsz-only rejection), both ABI builds, table-to-byte consistency and a bounded **affected-environment** runtime test. The ARM64/Thumb resume byte slices and RVAs are in `mapping-design.md` and existing table semantic tests. No such validation code/test has been written.
+4. Build a fresh **new-named** same-signer diagnostic/fix pair and ask the user for one WSA launch/log. Existing private helper refuses existing outputs; do not delete or overwrite the preserved first diagnostic pair. A successful guard check is not yet guest-entry/Logout/resume-path acceptance.
+
+### Private artifacts, signing and completed checks
+
+Scratch root: **`C:\Users\fes\AppData\Local\Temp\opencode\raspberry\emulator-compat-20261122\`**.
+
+- User source `E:\Downloads\linereplay-10.1.0.0.apk`, private `supplied.apk`, SHA-256 **`d304821c5c7278fb8789310a9d0d88ad011ca20c43f88ce6090ac7f12dac4e54`**. Package/version unchanged; minSdk23/target33, ARM64/ARMv7 only.
+- Main-reviewed private reports: `apk-audit.md`, `crash-log-analysis.md`, `source-audit.md`, `mapping-design.md`. Their statements that live permissions are unknown are **superseded by the newest log above**. Supplied APK native segment expansions/trampoline bytes and own-library constants match source/tables; ARMv7 RX delta is0, RW delta0x1000. No static native artifact mismatch.
+- Stock copy under `stock\LINE+PLAY+-+Our+Avatar+World_10.1.0.0_APKPure.apk` matches locked SHA `aa6495a0…45d1`; extracted stock classes3 at `stock\extracted\classes3.dex`. Supplied extracted files under `extracted\`. Archives were never written.
+- **User-authorized matching signing folder:** `C:\Users\fes\AppData\Local\Temp\opencode\raspberry\dist-20261121\private\`, files `raspberry.p12` and `keystore.password`, alias `raspberry`. Certificate SHA-256 **`80a0db2acb964636fe38c451679bf9d31efdc8cbec94f54751d6d7bf5051b69c`**, matches supplied APK. Key/password paths were read only through keytool/signer, passwords not printed; no ACL/key changes. `%LOCALAPPDATA%\Raspberry\keys\dev-20261110.p12` has a different signer and was not used.
+- First diagnostic pair **`diagnostic-{a,b}\raspberry-lineplay-10.1.0.0.apk`**, 66,826,198 B, SHA-256 **`3241cbf13a2f4c3460e5c4a6cd48b5c7ab3eeb24e06930f4e624bbb754e5d80d`**, byte-identical and signer verified. User was given A path and returned the new failure log. Keep both intact.
+- Independent ZIP comparison found exactly three non-signature changes against supplied APK: corrected classes3 + both own native libraries. **5,176 retained raw compressed payloads match**, including endpoint, manifest, stock libraries and supplied classes5. Classes3 body from byte32 onward is identical; only magic/checksum/signature fields differ. Rebuilt via normal CLI from locked stock, not a header-only post-sign patch.
+- Helpers: `build-diagnostic.ps1`, `verify-package.go`, `verify-dex-fix.ps1`, `dex-headers.ps1`; private CLI `raspberry.exe`, `diagnostic-artifacts\` (own libs + supplied classes5), `classes3-format-fixed.dex`. Helpers contain paths, not printed endpoint/password contents. No temporary helper in Git.
+- **Passed:** full Windows gate (rerun after source changes), `go test -race -count=1 ./...` earlier in slice, Java host tests, both native NDK builds (main rerun), dexpatch build/selftests, real classes3 035 + checksum + 8,438 classes / 56,283 untouched / 19 edited semantic checks, signed deterministic package pair, final `git diff --check` (only autocrlf warnings). No newer signed mapping-fix build or runtime acceptance.
+
+### Raspberry AVD preflight — stopped, no app mutation
+
+- Tester stopped with no command in flight when user requested main takeover. Main then performed read-only preflight: `emulator-5559` reports **Raspberry**, Android17, `x86_64,arm64-v8a`, 1290×2796. Screenshot shows launcher/Home; game PID query returned none.
+- Main pulled only the installed base APK to **`avd-check\installed-before.apk`**, SHA-256 **`5100124509e1cb85ffe3ae6a2299a3c5e4c44937ae576921c81512086cff13da`**. Signer in `avd-check\installed-signer.txt` is **`b4e2c6962df25303714eafcd2b2b42b81cdf223334858ed735da6e378498b77f`** — **does not match** the supplied/distribution diagnostic signer `80a0db2a…`.
+- **Do not install the existing diagnostic on this AVD, uninstall, clear data or rotate its key.** A future AVD regression needs its own authorized matching key, or a separate agreed disposable installation. The current matching distribution key is for the user's affected installation, not this preserved AVD.
+- `avd-check\preflight.png` was independently inspected by main. No force-stop, launch, installation, UI input, permission/setting change, credential/prefs/cookie read, or log capture occurred. No `avd-check\report.md` was written; the evidence above is the actual record.
+- Initial tester evidence-directory command failed because the shell scanner cannot parse compound `if ... mkdir`; it was **not a user permission denial**. Plain `mkdir` through the same tool succeeded. Do not invent an authorization blocker from that old parse error. Main's simple bounded ADB commands worked.
+
+### HANDOFF ACCEPTED — 2026-11-22 (Antigravity continuation)
+
+- Read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `README.md`, `docs/{patches,build,usage,security}.md`, newest WSA diagnostic log `E:\Downloads\New folder (7)\20261122105713.log` (lines 9180–9240, confirming `resume-map bits=64 prot=1` → `reauth rx` → `install reauth`), `native/{hook.c,reauth_android.c,reauth.h,reauth_test.c,endpoint.h}`, `patches/libgame-{arm64,armv7}.tbl`, and private `mapping-design.md`.
+- Verified Git: `main` / `origin/main` at `35c7fb4`, 8 uncommitted modified tracked files (`.agents/{AGENTS,CONTRACT,HISTORY,PLAN}.md`, `docs/patches.md`, `native/hook.c`, `tools/dexpatch/src/dev/raspberry/dexpatch/{Main,SelfTest}.java`), nothing staged. Preserving all uncommitted changes, first diagnostic pair, Raspberry AVD state, and read-only Cherry/archives. No commit/push.
+- **Implemented targeted executable-source resume guard [V host/build/package; WSA runtime pending]:**
+  - Added `native/resume_guard.{h,c}` + `native/resume_guard_test.c`, wired into `scripts/build-native.ps1`, `native/hook.c` (`rb_game_validate_resume_source`), and `native/reauth_android.c` (full 8 B / 8 B ARM64 and 16 B / 8 B ARMv7 pinned resume stubs + file-offset binding; Thumb low bit stripped only for range/read checks and preserved on callable function pointers; fixed `resume-map source-nx` / `reauth ok` info diagnostics). No `mprotect` on code; RELRO/GOT/BSS/symbol/protection checks unchanged.
+  - Added `internal/patch/reauth_table_test.go::TestReauthNativeResumeGuardsMatchTables` pinning the C byte arrays and offsets directly to `patches/libgame-{arm64,armv7}.tbl`.
+  - Passed: `scripts/build-native.ps1` (both ABIs `-Wall -Werror` + all 3 native host tests), `scripts/gate.ps1`, uncached `go test -race -count=1 ./...` (all 8 packages), and `git diff --check`.
+  - Built fresh deterministic same-signer fix pair under `%TEMP%\opencode\raspberry\emulator-compat-20261122\resume-fix-{a,b}\raspberry-lineplay-10.1.0.0.apk` (66,826,198 B, SHA-256 `307c4aa784b14c0f9a42a24e569e93b25f73d399f6ff531578948d669c35b04e`, signer `80a0db2a…`). Independent ZIP verification (`verify-resume-fix.go`) confirms exactly 3 non-signature changes vs `supplied.apk` (`classes3.dex` format 035 + both `libraspberry.so`) and 5,176 retained raw compressed payloads. Preserved `diagnostic-{a,b}` untouched.
+- **Next:** user installs `resume-fix-a\raspberry-lineplay-10.1.0.0.apk` on WSA and returns one launch log/result to confirm whether `rb_reauth_install` succeeds (`resume-map source-nx` + `reauth ok`) and whether the translated resume stubs execute cleanly on startup / guest entry / Logout.
+
+## Android emulator startup investigation — 2026-11-22 (historical; superseded by top handoff)
+
+- **Superseded status:** the later read-only AVD preflight and WSA permission diagnosis are recorded in the top handoff. Do not resume an installation from this paragraph. The evidence-directory refusal was a shell-scanner parse error on a compound command, later bypassed with a plain command; it was not a permission denial.
+- **New user scope:** investigate immediate exits on MuMu, BlueStacks, LDPlayer and WSA. **Raspberry AVD is off-limits for this session; Cherry's agent is using it.** No device/adb commands, installations or account actions have been performed.
+- Context read: all four `.agents/` files, README, build/usage/patch/security/iOS docs and Cherry's server contract (read-only). Intake `main` and remote tip match `35c7fb4`; working tree was clean. No commit/push requested.
+- User APK copied to `%TEMP%\opencode\raspberry\emulator-compat-20261122\supplied.apk`, SHA-256 `d304821c5c7278fb8789310a9d0d88ad011ca20c43f88ce6090ac7f12dac4e54`. `aapt2` confirms original package/version, minSdk23/target33, ARM64 and ARMv7 only. This is not native x86 support.
+- **[V supplied log + S source] WSA startup blocker located:** private `E:\Downloads\New folder (7)\20261121141437.log`, first observed failure at lines 9922–9948: `raspberry: reauth rx`, `install reauth`, immediately followed by `wm_finish_activity` with `app-request`, then process self-SIGKILL. Repeated launches reach the same marker. `native/reauth_android.c` rejects one of the two resume addresses through `rb_game_in_rx`; `native/hook.c` checks ELF executable-segment membership plus readable/executable/nonwritable `/proc/self/maps` permissions. DEX catches the installation failure and finishes before engine initialization. This is an own validation rejection, not an observed AirArmor callback or unexplained fatal native signal.
+- The preceding missing legacy absolute `libgame.so` path is not established as the terminal failure: execution subsequently reaches Raspberry's re-auth installer. The actual range-versus-mapping failure reason is not in the marker. Houdini keeping translated ARM source pages non-executable is a hypothesis, not a measured fact. Do not remove the guard or generalize this WSA result to the other emulators without evidence.
+- Newer-named `20261122061953.log` and user-suggested `20261121210819.log` did not yield a game startup failure in main's targeted checks; system AppOps exceptions and explicit package/data removal are not app crash evidence.
+- **[V host/build]** full Windows gate, uncached `go test -race -count=1 ./...`, Java host tests, native both-ABI builds and focused patch-table tests pass. These do not exercise translated device mappings.
+- Private reports under the APK scratch root, all main-read: `source-audit.md`, `apk-audit.md`, `crash-log-analysis.md`, and `mapping-design.md` (design only, not accepted as a runtime change).
+- **Offline audit result:** signatures v1/v2/v3 and ZIP alignment verify; actual both-ABI RX segment expansions, trampoline/resume bytes and packaged own-library constants match the tables/source. ARMv7 RX has VA=file offset; its RW segment alone has the `0x1000` delta. No static artifact mismatch explains the guard failure. BSS slot storage deliberately occupies page padding beyond `p_memsz`; live mapping access is still unverified. Own libraries target API23 and depend only on libc/libdl/liblog. IDA leases are closed.
+- **Historical log result, superseded by top handoff:** these seven captures did not distinguish range from permissions. The later diagnostic log does.
+- **Diagnostic-only native change, main-reviewed/build-gated:** `native/hook.c` adds only fixed `resume-map` rejection stages and numeric pointer-width/permission flags. Every validation condition and return is unchanged; no mapping-policy relaxation. Main reran both native builds, full host gate and whitespace checks after the logging edit. The later diagnostic APK and user's `prot=1` result are recorded above.
+- **Separate DEX defect confirmed and corrected by main:** extracted stock `classes3.dex` is 035; the supplied patched APK's is 040. `tools/dexpatch/.../Main.java` forced `Opcodes.forApi(33)`, causing the writer to raise the format to Android10+ while the manifest still declares minSdk23. It now detects the input format, and semantic verification rejects a format change. `SelfTest.java` exercises DEX035 round-trip and rejection of a synthesized 040 upgrade. Pinned dexlib source confirms null opcode selection derives from the header; Android's official DEX specification dates 040 to Android10. Real locked-baseline rewriting preserves 035, verifies all 8,438 classes / 56,283 untouched / 19 edited methods, and passes `dexdump -c`. No header-only downgrade or stock class/name/opcode change. This packaging defect does not explain WSA reaching native re-auth; older emulator Android versions and actual DEX-load failures remain unverified.
+- **User workflow override:** main now performs RE directly because delegated RE was too slow. Both RE agents finished and closed their leases; the remaining delegated DEX lookup was stopped, and main completed it. No agent/device task remains active. Main owns the diagnostic runtime follow-up decision and final docs; no commit/push requested.
+- **Same-signer diagnostic packaged and user-run [V host/package + supplied log]:** details and the resulting `prot=1` diagnosis are in the top handoff. Do not request another run of this same diagnostic merely to rediscover that result.
+
 Handoff protocol, open tasks, design proposal, status and roadmap. Rules, lab facts and client facts: [AGENTS.md](AGENTS.md). The interface with Cherry servers: [CONTRACT.md](CONTRACT.md). Dated evidence and old pairs: [HISTORY.md](HISTORY.md). Implementation is in progress; the status table and current handoff supersede the original proposal.
 
 ## HANDOFF INITIATED — 2026-11-22 (physical iOS startup)

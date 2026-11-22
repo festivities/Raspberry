@@ -20,6 +20,7 @@ import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.Method;
 import com.android.tools.smali.dexlib2.iface.MethodImplementation;
 import com.android.tools.smali.dexlib2.immutable.ImmutableClassDef;
+import com.android.tools.smali.dexlib2.immutable.ImmutableDexFile;
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethod;
 import com.android.tools.smali.dexlib2.immutable.ImmutableMethodParameter;
 import com.android.tools.smali.dexlib2.immutable.reference.ImmutableFieldReference;
@@ -48,6 +49,24 @@ final class SelfTest {
         Method rewriteStatic = rewriteStaticMethod();
         write(dex, List.of(gate, hook, skip, rewrite, rewriteStatic));
         var loaded = Main.load(dex.getPath());
+        if (!new String(Files.readAllBytes(dex.toPath()), 4, 3,
+                java.nio.charset.StandardCharsets.US_ASCII).equals("035")) {
+            fail("synthetic minimum-API DEX format");
+        }
+        File roundtrip = new File(dir, "format-preserved.dex");
+        Main.writeChecked(loaded, roundtrip, Main.Counts.of(loaded));
+        Main.verify(dex.getPath(), roundtrip.getPath());
+        File modern = new File(dir, "format-upgraded.dex");
+        Main.writeChecked(new ImmutableDexFile(Opcodes.forApi(33), loaded.getClasses()),
+                modern, Main.Counts.of(loaded));
+        try {
+            Main.verify(dex.getPath(), modern.getPath());
+            fail("accepted DEX format upgrade");
+        } catch (IllegalStateException e) {
+            if (!"dex format changed".equals(e.getMessage())) {
+                throw e;
+            }
+        }
         gate = find(loaded, "gate");
         hook = find(loaded, "hook");
         skip = find(loaded, "skip");
@@ -630,7 +649,7 @@ final class SelfTest {
     }
 
     private static void write(File out, List<Method> methods) throws Exception {
-        DexPool pool = new DexPool(Opcodes.forApi(33));
+        DexPool pool = new DexPool(Opcodes.forApi(23));
         Map<String, List<Method>> byClass = new LinkedHashMap<>();
         for (Method method : methods) {
             byClass.computeIfAbsent(method.getDefiningClass(), ignored -> new ArrayList<>()).add(method);

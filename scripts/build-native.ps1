@@ -24,7 +24,8 @@ $src = @(
     (Join-Path $root 'native\hook.c'),
     (Join-Path $root 'native\endpoint.c'),
     (Join-Path $root 'native\reauth.c'),
-    (Join-Path $root 'native\reauth_android.c')
+    (Join-Path $root 'native\reauth_android.c'),
+    (Join-Path $root 'native\resume_guard.c')
 )
 foreach ($abi in @('arm64-v8a', 'armeabi-v7a')) {
     $target = $(if ($abi -eq 'arm64-v8a') { 'aarch64-linux-android23' } else { 'armv7a-linux-androideabi23' })

@@ -1,6 +1,5 @@
 package dev.raspberry.dexpatch;
 
-import com.android.tools.smali.dexlib2.Opcodes;
 import com.android.tools.smali.dexlib2.base.reference.BaseMethodReference;
 import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
@@ -51,7 +50,7 @@ public final class Main {
         if (!CLASSES3_SHA.equals(sha)) {
             throw new IllegalStateException("classes3 hash mismatch");
         }
-        DexBackedDexFile input = new DexBackedDexFile(Opcodes.forApi(33), raw);
+        DexBackedDexFile input = new DexBackedDexFile(null, raw);
         Counts before = Counts.of(input);
         DexFile rewritten = new DexRewriter(new Module()).getDexFileRewriter().rewrite(input);
         writeChecked(rewritten, new File(out), before);
@@ -61,6 +60,9 @@ public final class Main {
     static void verify(String original, String patched) throws Exception {
         DexFile a = load(original);
         DexFile b = load(patched);
+        if (a.getOpcodes().api != b.getOpcodes().api) {
+            throw new IllegalStateException("dex format changed");
+        }
         Map<String, Method> right = index(b);
         int untouched = 0;
         int edited = 0;
@@ -170,7 +172,7 @@ public final class Main {
     }
 
     static DexBackedDexFile load(String path) throws Exception {
-        return new DexBackedDexFile(Opcodes.forApi(33), Files.readAllBytes(new File(path).toPath()));
+        return new DexBackedDexFile(null, Files.readAllBytes(new File(path).toPath()));
     }
 
     static String sha256(byte[] raw) throws Exception {

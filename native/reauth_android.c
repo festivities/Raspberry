@@ -11,7 +11,12 @@
 struct rb_game_image;
 
 uintptr_t rb_game_base(const struct rb_game_image *g);
-int rb_game_in_rx(const struct rb_game_image *g, uintptr_t addr, size_t width);
+int rb_game_validate_resume_source(const struct rb_game_image *g,
+                                   uintptr_t tagged_rva,
+                                   int strip_thumb_bit,
+                                   uint64_t expected_file_off,
+                                   const uint8_t *expected_bytes,
+                                   size_t expected_len);
 int rb_game_in_bss_tail(const struct rb_game_image *g, uintptr_t addr, size_t width);
 int rb_validate_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, void *expect_val);
 int rb_patch_relro_slot(const struct rb_game_image *g, uintptr_t slot_va, void *expect_val, void *new_val);
@@ -63,6 +68,16 @@ void rb_jni_notify_reset(uint64_t epoch, int reason);
 
 #define VA_RESUME_REQ_GUEST         0x384ffdcu
 #define VA_RESUME_SET_VISIBLE_BTN   0x384fff0u
+#define OFF_RESUME_REQ_GUEST        0x384ffdcu
+#define OFF_RESUME_SET_VISIBLE_BTN  0x384fff0u
+#define RESUME_STRIP_THUMB_BIT      0
+
+static const uint8_t k_resume_req_guest_bytes[] = {
+    0xfd, 0x7b, 0xb5, 0xa9, 0x1e, 0xbd, 0x8d, 0x17
+};
+static const uint8_t k_resume_set_visible_btn_bytes[] = {
+    0xfd, 0x7b, 0xbb, 0xa9, 0x5e, 0x64, 0x91, 0x17
+};
 
 #define SYM_LOGIN_MSGPROC_THK "_ZThn368_N12NaLoginLayer7MsgProcEP9SbMessage"
 
@@ -112,6 +127,17 @@ void rb_jni_notify_reset(uint64_t epoch, int reason);
 
 #define VA_RESUME_REQ_GUEST         (0x20806a0u | 1u)
 #define VA_RESUME_SET_VISIBLE_BTN   (0x2080684u | 1u)
+#define OFF_RESUME_REQ_GUEST        0x20806a0u
+#define OFF_RESUME_SET_VISIBLE_BTN  0x2080684u
+#define RESUME_STRIP_THUMB_BIT      1
+
+static const uint8_t k_resume_req_guest_bytes[] = {
+    0x4a, 0xf6, 0xc0, 0x53, 0xc0, 0xf2, 0x02, 0x13,
+    0x2d, 0xe9, 0xf0, 0x47, 0x7d, 0xf5, 0x17, 0x91
+};
+static const uint8_t k_resume_set_visible_btn_bytes[] = {
+    0x2d, 0xe9, 0xf0, 0x41, 0xe3, 0xf5, 0xe8, 0x95
+};
 
 #define SYM_LOGIN_MSGPROC_THK "_ZThn276_N12NaLoginLayer7MsgProcEP9SbMessage"
 
@@ -184,6 +210,7 @@ static set_visible_btn_fn g_resume_set_visible_btn;
 static pthread_mutex_t g_reauth_mu = PTHREAD_MUTEX_INITIALIZER;
 static rb_reauth_state g_reauth;
 static void *g_active_login_layer;
+static uint8_t g_vt_patched[VT_N];
 
 static void mark_login_layer_alive_locked(void *layer) {
     if (layer) {
@@ -638,8 +665,12 @@ void rb_reauth_rollback(const struct rb_game_image *g) {
         return;
     }
     for (i = 0; i < VT_N; i++) {
+        if (!g_vt_patched[i]) {
+            continue;
+        }
         uintptr_t expect_addr = base + k_vtables[i].expect_va;
         (void)rb_patch_relro_slot(g, k_vtables[i].slot_va, k_vtables[i].hook_fn, (void *)expect_addr);
+        g_vt_patched[i] = 0u;
     }
     clear_bss_slots(base);
 }
@@ -658,11 +689,14 @@ int rb_reauth_install(const struct rb_game_image *g) {
         (void *)hook_SetVisibleLoginBtn,
         (void *)hook_createGuestAccount,
     };
+    uint8_t vt_want[VT_N];
     int i;
 
     if (!g) {
         return -1;
     }
+    memset(vt_want, 0, sizeof vt_want);
+    memset(g_vt_patched, 0, sizeof g_vt_patched);
     base = rb_game_base(g);
     libgame = dlopen("libgame.so", RTLD_NOW | RTLD_NOLOAD);
     if (!libgame) {
@@ -673,8 +707,12 @@ int rb_reauth_install(const struct rb_game_image *g) {
         reauth_log("dlsym");
         return -1;
     }
-    if (!rb_game_in_rx(g, (base + VA_RESUME_REQ_GUEST) & ~(uintptr_t)1u, 4u) ||
-        !rb_game_in_rx(g, (base + VA_RESUME_SET_VISIBLE_BTN) & ~(uintptr_t)1u, 4u)) {
+    if (!rb_game_validate_resume_source(g, VA_RESUME_REQ_GUEST, RESUME_STRIP_THUMB_BIT,
+                                        OFF_RESUME_REQ_GUEST, k_resume_req_guest_bytes,
+                                        sizeof k_resume_req_guest_bytes) ||
+        !rb_game_validate_resume_source(g, VA_RESUME_SET_VISIBLE_BTN, RESUME_STRIP_THUMB_BIT,
+                                        OFF_RESUME_SET_VISIBLE_BTN, k_resume_set_visible_btn_bytes,
+                                        sizeof k_resume_set_visible_btn_bytes)) {
         reauth_log("rx");
         return -1;
     }
@@ -690,8 +728,16 @@ int rb_reauth_install(const struct rb_game_image *g) {
             reauth_log("vtsym");
             return -1;
         }
-        if (rb_validate_relro_slot(g, k_vtables[i].slot_va, (void *)expect_addr) != 0) {
-            reauth_log("vtslot");
+        int slot_rc = rb_validate_relro_slot(g, k_vtables[i].slot_va, (void *)expect_addr);
+        if (slot_rc == 0) {
+            vt_want[i] = 1u;
+        } else if (slot_rc == 1 && i == VT_LOGIN_DTOR_D0) {
+            /* Under Houdini/WSA, NaLoginLayer::~NaLoginLayer() D0 slot can hold a translator R-X stub.
+             * Leave it untouched rather than overwriting an external pointer; D2 and reset hooks remain active. */
+            __android_log_print(ANDROID_LOG_INFO, "raspberry", "reauth dtor-d0 external-rx skipped");
+            vt_want[i] = 0u;
+        } else {
+            __android_log_print(ANDROID_LOG_ERROR, "raspberry", "reauth vtslot idx=%d", i);
             return -1;
         }
         vt_orig[i] = sym;
@@ -729,18 +775,28 @@ int rb_reauth_install(const struct rb_game_image *g) {
         __atomic_store_n((void **)(base + bss_va[i]), bss_hook[i], __ATOMIC_RELEASE);
     }
     for (i = 0; i < VT_N; i++) {
-        void *expect_ptr = (void *)(base + k_vtables[i].expect_va);
+        void *expect_ptr;
+        if (!vt_want[i]) {
+            continue;
+        }
+        expect_ptr = (void *)(base + k_vtables[i].expect_va);
         if (rb_patch_relro_slot(g, k_vtables[i].slot_va, expect_ptr, k_vtables[i].hook_fn) != 0) {
             int j;
             for (j = i - 1; j >= 0; j--) {
+                if (!g_vt_patched[j]) {
+                    continue;
+                }
                 void *orig_ptr = (void *)(base + k_vtables[j].expect_va);
                 (void)rb_patch_relro_slot(g, k_vtables[j].slot_va, k_vtables[j].hook_fn, orig_ptr);
+                g_vt_patched[j] = 0u;
             }
             clear_bss_slots(base);
             reauth_log("vtpatch");
             return -1;
         }
+        g_vt_patched[i] = 1u;
     }
+    __android_log_print(ANDROID_LOG_INFO, "raspberry", "reauth ok");
     return 0;
 }
 

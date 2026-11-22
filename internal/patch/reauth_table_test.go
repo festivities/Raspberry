@@ -3,6 +3,11 @@ package patch
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -466,4 +471,120 @@ func decodeThumbPushW(insn []byte) (regMask uint16, ok bool) {
 
 func isAllZero(b []byte) bool {
 	return bytes.Equal(b, make([]byte, len(b)))
+}
+
+func TestReauthNativeResumeGuardsMatchTables(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "native", "reauth_android.c"))
+	if err != nil {
+		t.Fatalf("read reauth_android.c: %v", err)
+	}
+	src := string(raw)
+	arm64Marker := "#if defined(__aarch64__)"
+	armMarker := "#elif defined(__arm__)"
+	elseMarker := "#else"
+
+	i64 := strings.Index(src, arm64Marker)
+	i32 := strings.Index(src, armMarker)
+	iEnd := strings.Index(src, elseMarker)
+	if i64 < 0 || i32 <= i64 || iEnd <= i32 {
+		t.Fatalf("unexpected ABI preprocessor structure in native/reauth_android.c")
+	}
+
+	cases := []struct {
+		name      string
+		tablePath string
+		section   string
+		stubs     []struct {
+			macro    string
+			arrName  string
+			editOff  int64
+			sliceOff int
+		}
+	}{
+		{
+			name:      "arm64",
+			tablePath: "patches/libgame-arm64.tbl",
+			section:   src[i64:i32],
+			stubs: []struct {
+				macro    string
+				arrName  string
+				editOff  int64
+				sliceOff int
+			}{
+				{"OFF_RESUME_REQ_GUEST", "k_resume_req_guest_bytes", 0x384ffd0, 12},
+				{"OFF_RESUME_SET_VISIBLE_BTN", "k_resume_set_visible_btn_bytes", 0x384ffe4, 12},
+			},
+		},
+		{
+			name:      "armv7",
+			tablePath: "patches/libgame-armv7.tbl",
+			section:   src[i32:iEnd],
+			stubs: []struct {
+				macro    string
+				arrName  string
+				editOff  int64
+				sliceOff int
+			}{
+				{"OFF_RESUME_REQ_GUEST", "k_resume_req_guest_bytes", 0x2080690, 16},
+				{"OFF_RESUME_SET_VISIBLE_BTN", "k_resume_set_visible_btn_bytes", 0x2080674, 16},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tab := mustLoad(t, tc.tablePath)
+			for _, st := range tc.stubs {
+				ed := findTableEdit(t, tab, st.editOff)
+				wantOff := st.editOff + int64(st.sliceOff)
+				wantBytes := ed.Replacement[st.sliceOff:]
+
+				gotOff := mustParseCHexMacro(t, tc.section, st.macro)
+				if gotOff != wantOff {
+					t.Fatalf("%s %s = %#x, want %#x", tc.name, st.macro, gotOff, wantOff)
+				}
+				gotBytes := mustParseCByteArray(t, tc.section, st.arrName)
+				if !bytes.Equal(gotBytes, wantBytes) {
+					t.Fatalf("%s %s = %x, want %x", tc.name, st.arrName, gotBytes, wantBytes)
+				}
+			}
+		})
+	}
+}
+
+func mustParseCHexMacro(t *testing.T, section, macro string) int64 {
+	t.Helper()
+	re := regexp.MustCompile(`#define\s+` + regexp.QuoteMeta(macro) + `\s+0x([0-9a-fA-F]+)u?`)
+	m := re.FindStringSubmatch(section)
+	if len(m) != 2 {
+		t.Fatalf("macro %s not found", macro)
+	}
+	v, err := strconv.ParseInt(m[1], 16, 64)
+	if err != nil {
+		t.Fatalf("parse macro %s: %v", macro, err)
+	}
+	return v
+}
+
+func mustParseCByteArray(t *testing.T, section, name string) []byte {
+	t.Helper()
+	re := regexp.MustCompile(`static\s+const\s+uint8_t\s+` + regexp.QuoteMeta(name) + `\[\]\s*=\s*\{([^}]+)\};`)
+	m := re.FindStringSubmatch(section)
+	if len(m) != 2 {
+		t.Fatalf("byte array %s not found", name)
+	}
+	byteRe := regexp.MustCompile(`0x([0-9a-fA-F]{2})`)
+	matches := byteRe.FindAllStringSubmatch(m[1], -1)
+	if len(matches) == 0 {
+		t.Fatalf("byte array %s has no bytes", name)
+	}
+	out := make([]byte, 0, len(matches))
+	for _, bm := range matches {
+		b, err := strconv.ParseUint(bm[1], 16, 8)
+		if err != nil {
+			t.Fatalf("parse byte %s: %v", bm[1], err)
+		}
+		out = append(out, byte(b))
+	}
+	return out
 }

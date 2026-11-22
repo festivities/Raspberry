@@ -1,5 +1,22 @@
 # Raspberry — History (HISTORY.md)
 
+## 2026-11-22 — Android emulator startup fix delivered (WSA Garden user-verified)
+
+- Accepted the 2026-11-22 Android emulator startup handoff and completed the WSA compatibility fixes:
+  - Implemented `native/resume_guard.{h,c}` + `native/resume_guard_test.c` and `TestReauthNativeResumeGuardsMatchTables`, replacing host-`PROT_EXEC` `rb_game_in_rx` with read-only executable-source validation (`PT_LOAD PF_R|PF_X`, file-backed bounds, file-offset binding, full `PROT_READ && !PROT_WRITE` map span, full pinned resume bytes). Both resume stubs passed on WSA (`resume-map source-nx bits=64 prot=1`).
+  - Follow-up WSA diagnostics (`20261122113100.log` → `20261122123023.log`) confirmed vtable slots `idx=0..7`, all 3 `.bss` slots, and all 4 GOT slots match strictly on WSA, while only `idx=8` (`VT_LOGIN_DTOR_D0`, `0x395cac8`) holds an Intel Houdini `[anon:Mem_0x10000001]` (`r-xp`, `prot=5`) pointer even though `dlsym("_ZN12NaLoginLayerD0Ev")` matches `base + 0x1ca8c70`.
+  - Updated `rb_validate_relro_slot` and `rb_reauth_install` to leave only `VT_LOGIN_DTOR_D0` untouched when it holds an external mapped `R-X` pointer, tracking patched slots (`g_vt_patched[]`) for clean rollback while preserving strict checks on all other slots and native `D0` hooking.
+  - Combined with the earlier `dexpatch` DEX035 preservation fix, user verified `wsa-fix-a` (`4493cd77…`) completes Discord sign-in (`raspberry://auth`) and reaches live Garden on WSA with gameplay working.
+  - All host, race, both-ABI NDK, Java, dexpatch, and repo-hygiene gates passed; committed and pushed at the user's request with a zero-context handoff in PLAN.
+
+## 2026-11-22 — Android emulator investigation stopped for immediate handoff
+
+- User reports MuMu/BlueStacks/LDPlayer/WSA exits; supplied logs locate WSA's own `reauth rx` fail-closed startup path rather than an observed protection callback or fatal native fault.
+- Source/package review found matching native tables/constants and a separate unintended classes3 DEX035→040 upgrade. The DEX writer now preserves the stock format, with synthetic and real-baseline semantic/checksum checks passing.
+- Logging-only native diagnostics were built into a private same-signer deterministic APK pair. User's new diagnostic log reports ARM64 `prot=1` at the first resume check: executable ELF range accepted, actual source page read-only/non-executable. A guarded compatibility correction has not been implemented or accepted.
+- Raspberry AVD was temporarily reserved, then released; main took over RE and device work at the user's request. Read-only AVD preflight found a different installed signer, launcher/Home and no game PID. No install, force-stop, launch, input, data clearing, credential read or permission change occurred.
+- User requests immediate zero-context handoff and **no commit/push**. Newest PLAN handoff holds exact uncommitted files, tests, private APK/log/key/helper paths, observed failure, AVD signer mismatch and next steps. All agents/captures/device tasks stopped; final IDA inventory empty.
+
 Dated evidence, superseded snapshots, investigations and old handoff pairs, kept verbatim. This file never overrides [AGENTS.md](AGENTS.md), [PLAN.md](PLAN.md) or [CONTRACT.md](CONTRACT.md). Newest section last. Move an INITIATED/ACCEPTED pair here from PLAN once it is accepted and superseded.
 
 ## 2026-11-21 — Windows Android intake and host portability correction
