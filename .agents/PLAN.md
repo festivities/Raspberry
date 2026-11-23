@@ -40,6 +40,16 @@
 - Matching distribution signing folder (read-only): `C:\Users\fes\AppData\Local\Temp\opencode\raspberry\dist-20261121\private\`
 - User WSA logs (read-only): `E:\Downloads\New folder (7)\20261122{105713,113100,114357,121040,123023}.log`
 
+### HANDOFF ACCEPTED — 2026-11-24 (Claude Code, macOS)
+
+- Git matched the handoff: `main` = `origin/main` = `2fa7773`, clean tree. Read all four `.agents/` files and Cherry's CONTRACT (read-only). Optional follow-ups above are unchanged.
+- **New work: Cherry §10 2026-11-24 iOS `302` static-redirect loop — root cause found [S iOS IDA + V production probe]:**
+  - iOS libcurl 7.61.1-DEV uses the **SecureTransport (`darwinssl`) backend**. Its connect routine (`sub_101437698`) calls `SSLSetPeerDomainName` only when `verifyhost` (`conn+769`) is set. The ADI curl wrapper init (`sub_1017A1254`) sets `SSL_VERIFYPEER`=0 and `SSL_VERIFYHOST`=0, so **iOS game HTTPS never sends SNI**. That explains Cherry's `sni=""` log for every iOS request. Android's OpenSSL backend sends SNI independently of verification.
+  - `ADI::Impl::ADIGetRequest` (`sub_1017A3988`) enables `FOLLOWLOCATION` through `sub_1017A1820`; `ADIPostRequest` (`sub_10179CB98`) disables it. iOS therefore does follow the `302`, and the redirected request goes to the R2 host without SNI.
+  - Production check (read-only `oracle-ubuntu`; the domain was read only into a shell variable and never printed): the owner's R2 custom domain answers a no-SNI ClientHello with **TLS alert 40 handshake_failure** (TLS 1.2 and any). With SNI, the handshake completes on TLS 1.3. Every redirected iOS fetch fails, so the client retries forever. The socket router is not involved: R2 names are outside the host set and pass through unchanged.
+  - Reply and options recorded in CONTRACT §4 (2026-11-24). Immediate mitigation is Cherry-side: do not redirect when the request's SNI is empty. Client fix candidate (not implemented, needs user go): runtime-only SNI restoration for **non-routed** curl connections that lack a peer domain name (`SSLHandshake` interposition, `fd → peer IP → unique passthrough-resolved name`). It sets only the peer domain name, so no verification change, and LINE-set connections to Cherry stay unchanged. Existing iOS installs keep failing until they are rebuilt, so the server mitigation is needed either way.
+  - IDA ran on a private job copy of the UUID-matched iOS database (closed and deleted). No device, Cherry repo, or server state was changed.
+
 ## Prior handoff — 2026-11-22 (Android emulator startup; accepted and superseded)
 
 **Resume here. This supersedes every older handoff and the stale “active” statuses below.** User requests an immediate zero-context transfer: **do not commit or push**. Read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `docs/{patches,build,usage,security}.md` and README. Check Git, then append **HANDOFF ACCEPTED**. This session stopped implementation; no task, device command, capture or subagent is active. IDA inventory is empty. Continue the Android emulator issue, not the closed iOS keyboard work.
