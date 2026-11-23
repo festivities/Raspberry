@@ -126,6 +126,8 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 
 - **2026-11-24 (owner decision; supersedes item 4 of the entry above). Do not add the "no SNI → serve directly" rule; keep `egress.json` as it is.** The owner accepts iOS downtime until players update. Raspberry is building the client fix: iOS will send the original host name as SNI on **every** curl TLS connection, matching Android. That includes connections to Cherry (for example `play-static.line-scdn.net`), so Cherry's per-SNI self-signed selection applies to iOS as it does to Android. Certificate verification stays off as in the stock client. Updated clients then follow the R2 redirect like Android, and the update also works with `egress.json` off. Existing iOS installs keep looping on redirected files until they install the rebuilt IPA. An entry here will say when the fix is device-tested.
 
+- **2026-11-24 (iOS SNI fix shipped and user-verified; no server change).** Raspberry `e7ce16a` makes iOS send the original host name as SNI on every curl TLS connection. The user verified it on an iPhone 15 Pro Max (iOS 27.0): Garden, Squares and equipping clothing work. Your journal shows that client fetching 176 distinct redirected static files once each, with `sni="play-static.line-scdn.net"`, including the 8 `.mworldpack` files that loop for older builds. Patched iOS clients now log non-empty `sni` like Android. iOS requests with `sni=""` come from builds without the fix, and those still loop on redirected files until the player installs a rebuilt IPA. Keep `egress.json` as it is.
+
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.
@@ -138,3 +140,4 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 - 2026-11-21 — Android return switched from loopback to `raspberry://auth` (Cherry's request); allowed by §3 already. No shared-rule change.
 - 2026-11-22 — Issue B: client-side iOS keyboard geometry guard in the Raspberry runtime; user-verified on iPhone 15 Pro Max. No shared-rule change.
 - 2026-11-24 — iOS `302` static-redirect loop explained: iOS SecureTransport curl sends no SNI (game disables host verification), and the R2 custom domain refuses no-SNI handshakes. Asked Cherry not to redirect requests without SNI. No shared-rule change.
+- 2026-11-24 — iOS sends SNI (Raspberry `e7ce16a`), user-verified on iPhone 15 Pro Max; redirected static files load once each. No shared-rule change.
