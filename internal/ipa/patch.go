@@ -448,7 +448,8 @@ type patchImageSegment struct {
 
 // PatchMainExecutable verifies the locked LINEPlay_Store baseline in memory and
 // returns a new patched executable byte slice with the dylib loader, notice
-// resolver, socket/DNS and guest-auth routes, and session re-auth callsites.
+// resolver, socket/DNS and guest-auth routes, session re-auth callsites and the
+// libcurl SecureTransport SNI gate.
 // It does not touch disk.
 func PatchMainExecutable(original []byte) ([]byte, error) {
 	if int64(len(original)) != MainSize {
@@ -497,6 +498,9 @@ func validateBaselineImage(data []byte) error {
 		return err
 	}
 	if err := validateReauthTargets(data); err != nil {
+		return err
+	}
+	if err := validateCurlSNIGate(data); err != nil {
 		return err
 	}
 	if !allZero(data[patchLoaderCommandOff:patchFirstTextSection]) {
@@ -860,6 +864,9 @@ func emitAllPatches(prepared []byte) ([]byte, error) {
 	if err := validateReauthTargets(prepared); err != nil {
 		return nil, err
 	}
+	if err := validateCurlSNIGate(prepared); err != nil {
+		return nil, err
+	}
 	if !allZero(prepared[patchLoaderHeaderEnd:patchFirstTextSection]) {
 		return nil, errors.New("ipa: patch: post-AddLoader RX gap is not zero")
 	}
@@ -1016,6 +1023,7 @@ func emitAllPatches(prepared []byte) ([]byte, error) {
 	for i, branch := range reauthBranches {
 		binary.LittleEndian.PutUint32(out[branch.rva:], reauthBranchWords[i])
 	}
+	binary.LittleEndian.PutUint32(out[curlSNIGateRVA:], curlSNIGatePatchedWord)
 
 	if err := verifyPatchOnlyDelta(prepared, out); err != nil {
 		return nil, err
@@ -1122,6 +1130,9 @@ func verifyDecodedInstructions(before, after []byte) error {
 		}
 	}
 	if err := verifyReauthInstructions(before, after); err != nil {
+		return err
+	}
+	if err := verifyCurlSNIPatch(before, after); err != nil {
 		return err
 	}
 	return nil
@@ -1786,6 +1797,7 @@ func patchCallsiteRanges() []byteRange {
 		{checkSessionErrorEntryRVA, checkSessionErrorEntryRVA + 4, "checkSession error entry"},
 		{guestGenerateErrorTailRVA, guestGenerateErrorTailRVA + 4, "guest/generate error dialog tail"},
 		{gdprLoginReadyCallsiteRVA, gdprLoginReadyCallsiteRVA + 4, "case 10043 GDPR-ready login-ready BL"},
+		{curlSNIGateRVA, curlSNIGateRVA + 4, "curl SecureTransport SNI gate"},
 	}
 	for _, spec := range socketStubSpecs {
 		ranges = append(ranges, byteRange{spec.stubRVA, spec.stubRVA + 4, spec.name + " stub B"})

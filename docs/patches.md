@@ -145,6 +145,15 @@ The runtime used to reject any installed bundle identifier other than the stock 
 - **Verify:** `ios/RBKeyboardGeometry_test.c` (core gate), strict SDK build. On a device, open chat or the avatar name field and confirm no abort; the unified log shows `guards keyboard=1 trace=1` and the real begin/end rects.
 - **Risk:** if iOS reports a begin width that is wrong but positive, it is still used as is. Skipping a non-finite `TracePosition` can leave the native field at its previous position for that frame.
 
+## iOS libcurl SNI (2026-11-24)
+
+- **Target:** the bundled libcurl 7.61.1 SecureTransport connect step `sub_101437698`. The word at RVA `0x1438000` changes from `CBZ W8, 0x1438050` (`0x34000288`) to `NOP` (`0xd503201f`). This is a one-word edit to the main executable, applied by `internal/ipa/curl_sni.go`.
+- **Evidence [S iOS IDA + V production]:** stock curl calls `SSLSetPeerDomainName`, the only place SNI is set, only when `CURLOPT_SSL_VERIFYHOST` (connection byte `+0x301`) is nonzero. The ADI HTTP wrapper `sub_1017A1254` sets `VERIFYPEER`=0 and `VERIFYHOST`=0, so stock iOS sends no SNI on any game HTTPS connection (Cherry logs `sni=""` for all iOS traffic). `ADIGetRequest` follows redirects. A Cherry operator that redirects static assets to Cloudflare-fronted storage therefore loops: that host answers a no-SNI ClientHello with alert 40. Android's OpenSSL backend sends SNI regardless of verification.
+- **Change:** always set the request's original host name as the peer domain name (SNI), as Android does. `VERIFYHOST` is read nowhere else in the backend. Certificate trust is unchanged: `VERIFYPEER`=0 still sets `kSSLSessionOptionBreakOnServerAuth`, and curl skips trust evaluation. The two `inet_pton` calls that become reachable only feed discarded diagnostics. Routing is unchanged: LINE-set names still reach the endpoint by marker, now with their original SNI, which Cherry already handles for Android.
+- **Guards:** a 13-word window `0x1437ffc..0x1438030` (the `VERIFYHOST` load, the gate, host/context loads, `BL _strlen` and `BL _SSLSetPeerDomainName` to stub `0x1abfcc0`) must match the locked baseline. Post-patch checks require only the gate word to change, to `NOP`. The packager's independent write-window check pins the same word and both neighbours.
+- **Verify:** `internal/ipa/curl_sni_test.go` (synthetic drift and real-baseline). Device: an updated client's iOS requests appear in Cherry's log with non-empty `sni`, and redirected static files load without repeated requests.
+- **Risk:** hosts that reject a particular SNI now see it (Cherry refuses only `lan3rd.line.me`, which iOS does not request). Existing installs need the rebuilt IPA.
+
 ## Experimental iOS loader probe (historical)
 
 This separate developer probe was **not** a complete iOS patch. It predates the current `raspberry ipa patch` command.

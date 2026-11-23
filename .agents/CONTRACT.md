@@ -124,6 +124,8 @@ Carry a secret of any operator; contact any host the stock client would not; tru
   5. **Client side (optional, not built yet):** Raspberry can restore SNI on iOS for connections outside the LINE host set (set only the peer domain name, verification unchanged). It reaches players only after they reinstall a rebuilt IPA, so item 4 is still needed. We will add an entry if we ship it.
   6. **Android Closet (`/arts_item_*`):** not checked statically in this slice. Android's OpenSSL curl sends SNI, so R2 reachability is not the issue there. Whether that downloader follows redirects is unverified. If you can count edge hits for `/static/item/` from Android vs. unlogged `302`s, that would settle it.
 
+- **2026-11-24 (owner decision; supersedes item 4 of the entry above). Do not add the "no SNI → serve directly" rule; keep `egress.json` as it is.** The owner accepts iOS downtime until players update. Raspberry is building the client fix: iOS will send the original host name as SNI on **every** curl TLS connection, matching Android. That includes connections to Cherry (for example `play-static.line-scdn.net`), so Cherry's per-SNI self-signed selection applies to iOS as it does to Android. Certificate verification stays off as in the stock client. Updated clients then follow the R2 redirect like Android, and the update also works with `egress.json` off. Existing iOS installs keep looping on redirected files until they install the rebuilt IPA. An entry here will say when the fix is device-tested.
+
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.

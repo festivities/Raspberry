@@ -640,8 +640,13 @@ func TestValidateMainWriteWindowsForFullPatch(t *testing.T) {
 		0x1ac1874,
 		0x1ac1904,
 		0x1ac1928,
+		0x1438000,
 	}
 	for _, off := range approvedOffsets {
+		if off == 0x1438000 {
+			binary.LittleEndian.PutUint32(patched[off:], curlSNIGatePatchedWord)
+			continue
+		}
 		if off == 0x53af68 {
 			binary.LittleEndian.PutUint32(patched[off:], autoGuestEntryPatchedWord)
 			continue
@@ -663,7 +668,9 @@ func TestValidateMainWriteWindowsForFullPatch(t *testing.T) {
 	// Leaving any one approved window unmodified must fail.
 	for _, omitOff := range approvedOffsets {
 		missingOne := append([]byte(nil), patched...)
-		if omitOff == 0x53af68 {
+		if omitOff == 0x1438000 {
+			copy(missingOne[0x1438000:0x1438004], orig[0x1438000:0x1438004])
+		} else if omitOff == 0x53af68 {
 			copy(missingOne[0x53af68:0x53af6c], orig[0x53af68:0x53af6c])
 		} else if omitOff == int(gdprLoginReadyCallsiteRVA) {
 			copy(missingOne[gdprLoginReadyCallsiteRVA:gdprLoginReadyCallsiteRVA+4], orig[gdprLoginReadyCallsiteRVA:gdprLoginReadyCallsiteRVA+4])
@@ -680,6 +687,13 @@ func TestValidateMainWriteWindowsForFullPatch(t *testing.T) {
 	binary.LittleEndian.PutUint32(badAutoWord[0x53af68:], autoGuestEntryPatchedWord+1)
 	if err := validateMainWriteWindows(orig, badAutoWord); err == nil {
 		t.Fatal("wrong auto-guest-entry word at 0x53af68 was accepted")
+	}
+
+	// A non-NOP SNI gate word must fail.
+	badSNIWord := append([]byte(nil), patched...)
+	binary.LittleEndian.PutUint32(badSNIWord[0x1438000:], curlSNIGatePatchedWord+1)
+	if err := validateMainWriteWindows(orig, badSNIWord); err == nil {
+		t.Fatal("wrong curl SNI gate word was accepted")
 	}
 
 	// Mutating outside approved windows must fail.
@@ -711,6 +725,8 @@ func TestValidateMainWriteWindowsForFullPatch(t *testing.T) {
 		0x1ac1878,
 		0x1ac1908,
 		0x1ac192c,
+		0x1437ffc,
+		0x1438028,
 	} {
 		badGuard := append([]byte(nil), patched...)
 		badGuard[guardOff] = 0xff

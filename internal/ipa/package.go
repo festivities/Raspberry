@@ -718,6 +718,7 @@ func validateMainWriteWindows(original, patched []byte) error {
 		{0x1ac1874, 0x1ac1878},
 		{0x1ac1904, 0x1ac1908},
 		{0x1ac1928, 0x1ac192c},
+		{0x1438000, 0x1438004},
 	}
 	for _, changed := range ranges {
 		found := false
@@ -741,6 +742,9 @@ func validateMainWriteWindows(original, patched []byte) error {
 	}
 	if got := binary.LittleEndian.Uint32(patched[0x53af68:]); got != autoGuestEntryPatchedWord {
 		return fmt.Errorf("ipa: package: auto-guest-entry word at 0x53af68 = 0x%08x, want 0x%08x", got, autoGuestEntryPatchedWord)
+	}
+	if got := binary.LittleEndian.Uint32(patched[0x1438000:]); got != 0xd503201f {
+		return fmt.Errorf("ipa: package: curl SNI gate word at 0x1438000 = 0x%08x, want NOP", got)
 	}
 	for _, guard := range []struct {
 		name  string
@@ -777,6 +781,8 @@ func validateMainWriteWindows(original, patched []byte) error {
 		{name: "freeaddrinfo stub tail", start: 0x1ac1878, end: 0x1ac1880},
 		{name: "getaddrinfo stub tail", start: 0x1ac1908, end: 0x1ac1910},
 		{name: "gethostbyname stub tail", start: 0x1ac192c, end: 0x1ac1934},
+		{name: "curl SNI VERIFYHOST load", start: 0x1437ffc, end: 0x1438000},
+		{name: "curl SNI SSLSetPeerDomainName call", start: 0x1438004, end: 0x1438030},
 	} {
 		if guard.end > len(original) {
 			return fmt.Errorf("ipa: package: guard window [%#x,%#x) exceeds executable size", guard.start, guard.end)

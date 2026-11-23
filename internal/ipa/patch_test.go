@@ -1304,5 +1304,6 @@ func syntheticPreparedImage() []byte {
 	for _, w := range reauthGuardWindows {
 		writeWords(buf[w.start:], w.words)
 	}
+	writeWords(buf[curlSNIGuardStart:], curlSNIGuardWords)
 	return buf
 }
