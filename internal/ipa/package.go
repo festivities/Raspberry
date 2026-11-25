@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,18 +28,44 @@ const (
 	ownDylibZipPath      = "Payload/LINEPlay_Store.app/Frameworks/libraspberry.dylib"
 	ownEndpointZipPath   = "Payload/LINEPlay_Store.app/raspberry/endpoint.json"
 	ownEndpointParentDir = "Payload/LINEPlay_Store.app/raspberry"
+	infoPlistZipPath     = "Payload/LINEPlay_Store.app/Info.plist"
 	maxDylibSize         = 32 << 20
 	maxEndpointJSONBytes = 4 << 10
+	maxInfoPlistBytes    = 64 << 10
 
 	lcDyldInfo        = uint32(0x22)
 	lcDyldInfoOnly    = uint32(0x80000022)
 	lcDyldExportsTrie = uint32(0x80000033)
 
 	zipDataDescriptor = uint16(0x8)
+
+	supportedDevicesAnchor = "\t<key>UISupportedDevices</key>\n\t<array>\n"
+	supportedDevicesClose  = "\t</array>\n"
 )
 
 var (
 	packageFixedTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Match only the line layout in the hash-locked XML plist.
+	supportedDeviceArray = regexp.MustCompile(`\A(?:\t\t<string>iPhone[0-9]+,[0-9]+</string>\n)*\t</array>\n`)
+
+	supportedDevices = [...]string{
+		"iPhone17,1",
+		"iPhone17,2",
+		"iPhone17,3",
+		"iPhone17,4",
+		"iPhone17,5",
+		"iPhone18,1",
+		"iPhone18,2",
+		"iPhone18,3",
+		"iPhone18,4",
+		"iPhone18,5",
+		"iPhone19,1",
+		"iPhone19,2",
+		"iPhone19,3",
+		"iPhone19,4",
+		"iPhone19,7",
+	}
 
 	// RequiredExports lists all ten symbols the runtime dylib must export directly from RX __TEXT.
 	RequiredExports = []string{
@@ -408,17 +435,17 @@ func findUniqueMember(zr *zip.Reader, name string) (*zip.File, error) {
 			continue
 		}
 		if found != nil {
-			return nil, errors.New("ipa: package: duplicate locked executable member")
+			return nil, fmt.Errorf("ipa: package: duplicate %s member", name)
 		}
 		found = f
 	}
 	if found == nil {
-		return nil, errors.New("ipa: package: locked executable member is missing")
+		return nil, fmt.Errorf("ipa: package: %s member is missing", name)
 	}
 	if !found.Mode().IsRegular() {
-		return nil, errors.New("ipa: package: locked executable member is not a regular file")
+		return nil, fmt.Errorf("ipa: package: %s member is not a regular file", name)
 	}
-	if found.Mode().Perm()&0o111 == 0 {
+	if name == ExecutablePath && found.Mode().Perm()&0o111 == 0 {
 		return nil, errors.New("ipa: package: locked executable member has no execute permission")
 	}
 	return found, nil
@@ -459,6 +486,18 @@ func assembleArchive(snapshot, patchedMain, dylib, endpointJSON []byte) ([]byte,
 	if err != nil {
 		return nil, err
 	}
+	infoPlist, err := findUniqueMember(zr, infoPlistZipPath)
+	if err != nil {
+		return nil, err
+	}
+	originalInfoPlist, err := readZipMember(infoPlist, maxInfoPlistBytes)
+	if err != nil {
+		return nil, fmt.Errorf("ipa: package: read Info.plist: %w", err)
+	}
+	patchedInfoPlist, err := addSupportedDevices(originalInfoPlist)
+	if err != nil {
+		return nil, err
+	}
 	if mainEntry.UncompressedSize64 != uint64(len(patchedMain)) {
 		return nil, errors.New("ipa: package: replacement main size does not match the source executable member")
 	}
@@ -474,6 +513,12 @@ func assembleArchive(snapshot, patchedMain, dylib, endpointJSON []byte) ([]byte,
 		if f.Name == ExecutablePath {
 			if err := writeReplacement(zw, f, patchedMain); err != nil {
 				return nil, fmt.Errorf("write replacement executable member: %w", err)
+			}
+			continue
+		}
+		if f.Name == infoPlistZipPath {
+			if err := writeReplacement(zw, f, patchedInfoPlist); err != nil {
+				return nil, fmt.Errorf("write replacement Info.plist: %w", err)
 			}
 			continue
 		}
@@ -596,6 +641,27 @@ func verifyPackage(sourceIPA, packed, expectedMain, expectedDylib, expectedEndpo
 			}
 			continue
 		}
+		if src.Name == infoPlistZipPath {
+			sourcePlist, err := readZipMember(src, maxInfoPlistBytes)
+			if err != nil {
+				return 0, fmt.Errorf("read source Info.plist: %w", err)
+			}
+			expectedPlist, err := addSupportedDevices(sourcePlist)
+			if err != nil {
+				return 0, err
+			}
+			packagedPlist, err := readZipMember(dst, maxInfoPlistBytes)
+			if err != nil {
+				return 0, fmt.Errorf("read packaged Info.plist: %w", err)
+			}
+			if !bytes.Equal(packagedPlist, expectedPlist) {
+				return 0, errors.New("packaged Info.plist differs from the exact supported-device update")
+			}
+			if dst.Method != src.Method || dst.Mode().Perm() != src.Mode().Perm() {
+				return 0, errors.New("packaged Info.plist compression or permissions differ from the locked source")
+			}
+			continue
+		}
 		srcRaw, err := digestRawMember(src)
 		if err != nil {
 			return 0, err
@@ -650,6 +716,36 @@ func verifyPackage(sourceIPA, packed, expectedMain, expectedDylib, expectedEndpo
 		return 0, errors.New("endpoint addition differs from the validated canonical descriptor")
 	}
 	return retained, nil
+}
+
+func addSupportedDevices(plist []byte) ([]byte, error) {
+	anchor := []byte(supportedDevicesAnchor)
+	if bytes.Count(plist, anchor) != 1 {
+		return nil, errors.New("ipa: package: Info.plist has a missing or ambiguous UISupportedDevices array anchor")
+	}
+	arrayStart := bytes.Index(plist, anchor) + len(anchor)
+	array := supportedDeviceArray.Find(plist[arrayStart:])
+	if array == nil {
+		return nil, errors.New("ipa: package: malformed Info.plist UISupportedDevices array")
+	}
+
+	var insert []byte
+	for _, device := range supportedDevices {
+		line := "\t\t<string>" + device + "</string>\n"
+		switch bytes.Count(array, []byte(line)) {
+		case 0:
+			insert = append(insert, line...)
+		case 1:
+		default:
+			return nil, errors.New("ipa: package: duplicate requested device in Info.plist UISupportedDevices")
+		}
+	}
+	closeAt := arrayStart + len(array) - len(supportedDevicesClose)
+	out := make([]byte, 0, len(plist)+len(insert))
+	out = append(out, plist[:closeAt]...)
+	out = append(out, insert...)
+	out = append(out, plist[closeAt:]...)
+	return out, nil
 }
 
 func digestRawMember(f *zip.File) (rawDigest, error) {

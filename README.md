@@ -195,6 +195,7 @@ go run ./cmd/raspberry ipa patch \
 
 - **`baseline mismatch`** — your APK or IPA is not the exact final release. Compare its SHA-256 with the table above.
 - **Install fails on Android with a signature error** — the installed app was signed with a different key. Uninstall it first, or patch with your original keystore.
+- **iOS install fails with `DeviceNotSupportedByThinning` on a listed newer iPhone** — rebuild the IPA from the original with the current patcher, then sign and install the new output. See the [added model identifiers](docs/patches.md#ios-device-allowlist).
 - **The iOS app does not open after sideloading** — see the iOS notes in [docs/ios.md](docs/ios.md), then ask in the support channel.
 
 For anything else, join [our Discord server](https://discord.gg/E9NNwhJmqN) and ask in the support channel.

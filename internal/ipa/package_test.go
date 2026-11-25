@@ -36,7 +36,14 @@ func TestAssembleArchiveDeterministicAndPreservesRetainedRawMembers(t *testing.T
 		t.Fatal("test main images must have equal lengths")
 	}
 	source := syntheticArchive(t, []syntheticMember{
-		{name: "Payload/LINEPlay_Store.app/Info.plist", body: []byte("plist"), method: zip.Store},
+		{name: infoPlistZipPath, body: []byte(
+			"<?xml version=\"1.0\"?>\n<plist>\n<dict>\n" +
+				"\t<key>UnrelatedBefore</key>\n\t<string>keep-before</string>\n" +
+				"\t<key>UISupportedDevices</key>\n\t<array>\n" +
+				"\t\t<string>iPhone14,2</string>\n\t\t<string>iPhone17,1</string>\n" +
+				"\t</array>\n\t<key>UnrelatedAfter</key>\n\t<string>keep-after</string>\n" +
+				"</dict>\n</plist>\n",
+		), method: zip.Store},
 		{name: ExecutablePath, body: sourceMain, method: zip.Deflate, mode: 0o755},
 		{name: "Payload/LINEPlay_Store.app/Assets/data.bin", body: bytes.Repeat([]byte("asset"), 30), method: zip.Deflate},
 	})
@@ -65,8 +72,8 @@ func TestAssembleArchiveDeterministicAndPreservesRetainedRawMembers(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retained != 2 {
-		t.Fatalf("retained raw members=%d, want 2", retained)
+	if retained != 1 {
+		t.Fatalf("retained raw members=%d, want 1", retained)
 	}
 
 	sourceZip, err := zip.NewReader(bytes.NewReader(source), int64(len(source)))
@@ -86,6 +93,24 @@ func TestAssembleArchiveDeterministicAndPreservesRetainedRawMembers(t *testing.T
 			t.Fatalf("member order changed at %d: %q != %q", i, src.Name, dst.Name)
 		}
 		if src.Name == ExecutablePath {
+			continue
+		}
+		if src.Name == infoPlistZipPath {
+			srcBody, err := readZipMember(src, maxInfoPlistBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantBody, err := addSupportedDevices(srcBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dstBody, err := readZipMember(dst, maxInfoPlistBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(dstBody, wantBody) {
+				t.Fatal("packaged Info.plist differs from the exact supported-device update")
+			}
 			continue
 		}
 		srcRaw, err := digestRawMember(src)
@@ -127,6 +152,62 @@ func TestAssembleArchiveDeterministicAndPreservesRetainedRawMembers(t *testing.T
 	}
 	if parsed.Host != "cherry.example.org" || parsed.MapPort(443) != 8443 {
 		t.Fatalf("unexpected parsed endpoint: %+v", parsed)
+	}
+}
+
+func TestAddSupportedDevicesPreservesPlistAndAddsExactIDs(t *testing.T) {
+	source := []byte(
+		"<?xml version=\"1.0\"?>\n<plist>\n<dict>\n" +
+			"\t<key>UnrelatedBefore</key>\n\t<string>keep-before</string>\n" +
+			"\t<key>UISupportedDevices</key>\n\t<array>\n" +
+			"\t\t<string>iPhone14,2</string>\n\t\t<string>iPhone17,1</string>\n" +
+			"\t</array>\n\t<key>UnrelatedAfter</key>\n\t<string>keep-after</string>\n" +
+			"</dict>\n</plist>\n",
+	)
+	got, err := addSupportedDevices(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte(
+		"<?xml version=\"1.0\"?>\n<plist>\n<dict>\n" +
+			"\t<key>UnrelatedBefore</key>\n\t<string>keep-before</string>\n" +
+			"\t<key>UISupportedDevices</key>\n\t<array>\n" +
+			"\t\t<string>iPhone14,2</string>\n\t\t<string>iPhone17,1</string>\n" +
+			"\t\t<string>iPhone17,2</string>\n\t\t<string>iPhone17,3</string>\n" +
+			"\t\t<string>iPhone17,4</string>\n\t\t<string>iPhone17,5</string>\n" +
+			"\t\t<string>iPhone18,1</string>\n\t\t<string>iPhone18,2</string>\n" +
+			"\t\t<string>iPhone18,3</string>\n\t\t<string>iPhone18,4</string>\n" +
+			"\t\t<string>iPhone18,5</string>\n\t\t<string>iPhone19,1</string>\n" +
+			"\t\t<string>iPhone19,2</string>\n\t\t<string>iPhone19,3</string>\n" +
+			"\t\t<string>iPhone19,4</string>\n\t\t<string>iPhone19,7</string>\n" +
+			"\t</array>\n\t<key>UnrelatedAfter</key>\n\t<string>keep-after</string>\n" +
+			"</dict>\n</plist>\n",
+	)
+	if !bytes.Equal(got, want) {
+		t.Fatal("supported-device update changed bytes beyond the expected array insertion")
+	}
+	if again, err := addSupportedDevices(got); err != nil || !bytes.Equal(again, got) {
+		t.Fatalf("supported-device update is not idempotent: err=%v", err)
+	}
+}
+
+func TestAddSupportedDevicesRejectsMalformedArrayAnchor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "missing anchor", data: []byte("<plist><dict/></plist>")},
+		{name: "ambiguous anchor", data: []byte(supportedDevicesAnchor + supportedDevicesAnchor + supportedDevicesClose)},
+		{name: "missing close", data: []byte(supportedDevicesAnchor)},
+		{name: "nested entry", data: []byte(supportedDevicesAnchor + "\t\t<array>\n\t</array>")},
+		{name: "malformed close", data: []byte(supportedDevicesAnchor + "\t</arrayish>")},
+		{name: "duplicate device", data: []byte(supportedDevicesAnchor + strings.Repeat("\t\t<string>iPhone17,1</string>\n", 2) + supportedDevicesClose)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := addSupportedDevices(tc.data); err == nil {
+				t.Fatal("malformed Info.plist supported-device array was accepted")
+			}
+		})
 	}
 }
 
@@ -757,7 +838,7 @@ func TestBuildPackageRealBaselineIPA(t *testing.T) {
 	if r.SourceSHA != BaselineSHA256 || int64(r.SourceSize) != BaselineSize {
 		t.Fatalf("unexpected source report: sha=%s size=%d", r.SourceSHA, r.SourceSize)
 	}
-	if r.SourceEntries != 3150 || r.RetainedRaw != 3149 {
+	if r.SourceEntries != 3150 || r.RetainedRaw != 3148 {
 		t.Fatalf("unexpected entry counts: source=%d retained=%d", r.SourceEntries, r.RetainedRaw)
 	}
 	if r.DylibID != RequiredDylibID || r.DylibZipPath != ownDylibZipPath || r.EndpointZipPath != ownEndpointZipPath {

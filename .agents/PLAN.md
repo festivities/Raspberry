@@ -1,27 +1,13 @@
 # Raspberry — Plan (PLAN.md)
 
-## HANDOFF INITIATED — 2026-11-24 (iOS SNI fix delivered and user-verified)
+## HANDOFF INITIATED — 2026-11-25 (iOS device allowlist)
 
-**Resume here. This supersedes every older handoff below.** Receiving agent with zero context: read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, `README.md`, `docs/{patches,build,usage,security,ios}.md`, and Cherry's `/Users/festivity/dev/Cherry/.agents/CONTRACT.md` (read-only). Check `git log -1`, `git status` and `origin/main`, then append **HANDOFF ACCEPTED**. No subagent, device command, capture or IDA lease is active. Cherry repo/services/data, the production host and both artifact archives are read-only for this project.
+**Resume here.** Read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md`, [IPA usage](../docs/usage.md#ios-inspection-and-patching), and the [allowlist patch inventory](../docs/patches.md#ios-device-allowlist). Verify `git log -1`, `git status --short --branch`, and `git ls-remote origin refs/heads/main`, then append **HANDOFF ACCEPTED**. The user asked for a final review, commit/push if green, and a zero-context handoff. Read Git for the actual delivery outcome.
 
-### Delivered
-
-- **Cause [S iOS IDA + V production]:** the iOS client looped on Cherry's `egress.json` `302` redirects of static assets to R2. iOS libcurl 7.61.1 uses SecureTransport, which sets SNI only when `VERIFYHOST` is on. The game turns verification off, so iOS sent no SNI (`sni=""` in Cherry logs). The R2 custom domain refuses a handshake without SNI (TLS alert 40). `ADIGetRequest` does follow redirects.
-- **Fix `e7ce16a` (`internal/ipa/curl_sni.go`):** NOP the `VERIFYHOST` gate at main-executable RVA `0x1438000` (`0x34000288` → `0xd503201f`), so every curl TLS connection sends the original host name as SNI, like Android. Trust stays off (`VERIFYPEER`=0). It is guarded by a 13-word baseline window, post-patch decode checks and the packager's independent write-window check; tests are in `internal/ipa/curl_sni_test.go` plus `patch_test.go`/`package_test.go`. `docs/patches.md` has the entry "iOS libcurl SNI".
-- **Verification:** full `scripts/gate.sh` and the uncached race suite passed, and real-baseline tests ran. The private IPA pair is deterministic and differs from the user-verified keyboard-fix IPA only in those 4 bytes. `myphone` in-place upgrade: containers kept, no crash; its requests carried SNI and Cherry served them (that run stopped at the Discord gate after a server-side `checkSession` 404, which is expected). **User-verified on iPhone 15 Pro Max / iOS 27.0:** Garden, Squares and equipping clothing work. The production journal shows 176 distinct redirected files fetched once each with SNI. One exit after the first download did not recur on a second run; it is treated as a one-off by user decision. The supplied `.ips` predated the build (stock process-exit watchdog).
-- **Cherry coordination:** the owner decided against a server "no SNI → serve directly" rule and accepts that unpatched iOS players stay broken until they install a rebuilt IPA. `egress.json` stays ON. CONTRACT §4 has the 2026-11-24 entries (cause, withdrawal, shipped/verified).
-
-### Private pointers (never stage)
-
-- Package: `${TMPDIR%/}/opencode/raspberry-ios-sni.vMaKP8/a/raspberry-lineplay-10.1.0-unsigned.ipa`, SHA-256 `6cf9cdca1cfe6d708225cdf2502ae21252f5924a4856e36f698c679f0b681256` (`b/` identical). Tester evidence is in `device/` alongside it. Distribute the patcher/instructions, never an IPA containing LINE code/assets.
-- Production checks used read-only `oracle-ubuntu` (`journalctl -u cherry`, and `sudo -n` reads of `/var/lib/cherry/config/*.json`). Never print the R2 domain, endpoint or other operator values.
-- `myphone` was left running and unlocked at the Discord sign-in overlay (PID 314, not signed in).
-
-### Open (optional, not blocking)
-
-- Android: does the Closet `/arts_item_*` downloader follow redirects? It is unchecked statically. Android sends SNI, so R2 reachability is not the issue.
-- Older optional follow-ups below are unchanged: MuMu/BlueStacks/LDPlayer reports, WSA re-auth flows, AVD `Raspberry` regression with its own signer, ARMv7 runtime, refused `guest/generate` UI, Battery Saver deep-link return, Android native libcurl TLS.
-- `~/.claude/agents/tester.md` model ID was corrected by the user (the old `claude-haiku-5.5` was rejected by the API).
+- **Reported:** `DeviceNotSupportedByThinning` named `iPhone18,3` and `iPhone17,1` as compatible identifiers for the affected device. Neither was in the locked IPA's `UISupportedDevices`.
+- **Implemented:** `internal/ipa/package.go` now appends `iPhone17,1`–`iPhone17,5`, `iPhone18,1`–`iPhone18,5`, and `iPhone19,1`, `iPhone19,2`, `iPhone19,3`, `iPhone19,4`, `iPhone19,7` at `raspberry ipa patch` time. Existing entries and unrelated plist bytes are preserved. Input SHA lock, original bundle ID, iOS 15 minimum, signing/provisioning requirements, runtime, Android payloads and Cherry are unchanged.
+- **Verified [V host/package]:** main re-reviewed the CLI/package path, reran the full Windows gate (`scripts/gate.ps1`), uncached `go test -race -count=1 ./...` and whitespace checks. Synthetic regressions pin the exact plist change and malformed-input refusal. The real locked-baseline package test uses a synthetic runtime dylib and verifies byte-identical output with 3,148 retained raw entries. This is not a device-ready IPA. The previous user-verified iOS SNI fix (`e7ce16a`) is unchanged; its handoff is in HISTORY.
+- **Next:** when the user can test, build with the Raspberry iOS runtime and the original locked `jp.naver.lineplay_10.1.0_decrypted.ipa`, use a fresh output directory outside every repo, and sign/install the new unsigned output with the usual signer. For an in-place update, keep the same signing identity and installed bundle ID. Confirm that the reported installer error is gone, then check launch separately. No physical install or gameplay test for this change, no device or production operation, and no active subagent, capture or IDA job from this slice. Do not distribute a game IPA or write to Cherry or the artifact archives.
 
 ## Prior handoff — 2026-11-22 (Android emulator startup fix delivered; WSA Garden user-verified; accepted and superseded)
 

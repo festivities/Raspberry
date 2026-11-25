@@ -128,6 +128,8 @@ Carry a secret of any operator; contact any host the stock client would not; tru
 
 - **2026-11-24 (iOS SNI fix shipped and user-verified; no server change).** Raspberry `e7ce16a` makes iOS send the original host name as SNI on every curl TLS connection. The user verified it on an iPhone 15 Pro Max (iOS 27.0): Garden, Squares and equipping clothing work. Your journal shows that client fetching 176 distinct redirected static files once each, with `sni="play-static.line-scdn.net"`, including the 8 `.mworldpack` files that loop for older builds. Patched iOS clients now log non-empty `sni` like Android. iOS requests with `sni=""` come from builds without the fix, and those still loop on redirected files until the player installs a rebuilt IPA. Keep `egress.json` as it is.
 
+- **2026-11-25 (iOS device allowlist; no server change).** The reported `DeviceNotSupportedByThinning` failure occurs at install, before the client contacts Cherry. The fix is limited to `UISupportedDevices` in the rebuilt IPA; no protocol or server change is needed.
+
 ## 5 Changelog
 
 - 2026-11-09 — contract 0 drafted.

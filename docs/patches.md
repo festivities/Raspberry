@@ -155,6 +155,13 @@ The runtime used to reject any installed bundle identifier other than the stock 
 - **Verify:** `internal/ipa/curl_sni_test.go` (synthetic drift and real-baseline). Device: an updated client's iOS requests appear in Cherry's log with non-empty `sni`, and redirected static files load without repeated requests.
 - **Risk:** hosts that reject a particular SNI now see it (Cherry refuses only `lan3rd.line.me`, which iOS does not request). Existing installs need the rebuilt IPA.
 
+## iOS device allowlist
+
+- **Target and evidence:** the stock app's `Info.plist` has a `UISupportedDevices` list that omits newer iPhones. The reported install failed with `DeviceNotSupportedByThinning` and named `iPhone18,3` and `iPhone17,1` as compatible identifiers for the device. Neither appears in the locked input's list.
+- **Change:** `raspberry ipa patch` appends `iPhone17,1`–`iPhone17,5` (iPhone 16 family), `iPhone18,1`–`iPhone18,5` (iPhone 17 family, including Air), and `iPhone19,1`, `iPhone19,2`, `iPhone19,3`, `iPhone19,4`, `iPhone19,7`. The list uses product identifiers, not regional A-numbers. Original entries, other plist bytes, and signing requirements are unchanged.
+- **Verify:** package tests check the added identifiers, preservation of other plist content, and deterministic output. For device confirmation, rebuild from the locked original and sign and install the new IPA on an affected phone.
+- **Limit:** this changes installer metadata only. Installation, launch and gameplay on the newly listed identifiers have not been verified on physical hardware.
+
 ## Experimental iOS loader probe (historical)
 
 This separate developer probe was **not** a complete iOS patch. It predates the current `raspberry ipa patch` command.
