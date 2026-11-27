@@ -826,11 +826,27 @@ static int install_slots(const struct rb_game_image *g) {
             rb_stage("got");
             return -1;
         }
-        /* Lazy PLT stubs are not the libc symbol; fail closed instead of guessing. */
         cur = __atomic_load_n((void **)addr, __ATOMIC_ACQUIRE);
         if (cur != expect[i]) {
-            rb_stage("got");
-            return -1;
+            /* Some vendor builds bind libgame's import to another library's export (SM-G965F,
+             * Android 10). Chain to that binding only if it is outside libgame and mapped
+             * R-X non-writable; anything else fails closed. */
+            int cur_prot = -1;
+            int cur_in_load = in_load(g, (uintptr_t)cur);
+            int cur_mapped = (cur != NULL && prot_at((uintptr_t)cur, &cur_prot) == 0) ? 1 : 0;
+            Dl_info di;
+            const char *lib = (cur != NULL && dladdr(cur, &di) != 0 && di.dli_fname) ? di.dli_fname : "?";
+            if (cur == NULL || cur_in_load || !cur_mapped ||
+                (cur_prot & (PROT_READ | PROT_EXEC)) != (PROT_READ | PROT_EXEC) ||
+                (cur_prot & PROT_WRITE) != 0) {
+                __android_log_print(ANDROID_LOG_ERROR, "raspberry",
+                                    "got mismatch slot=%d null=%d in_load=%d mapped=%d prot=%d lib=%s", i,
+                                    cur == NULL ? 1 : 0, cur_in_load, cur_mapped, cur_prot, lib);
+                rb_stage("got");
+                return -1;
+            }
+            __android_log_print(ANDROID_LOG_INFO, "raspberry", "got external slot=%d lib=%s", i, lib);
+            expect[i] = cur;
         }
         slot[i] = addr;
     }
