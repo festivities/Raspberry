@@ -139,6 +139,7 @@ public final class Main {
                     "Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B",
                     "Ljp/naver/common/android/notice/log/ErrorLogAPIImpl;->sendFailLog(Ljava/lang/String;Ljava/lang/String;)Z",
                     "Ljp/naver/lineplay/android/LineplayApplication;->initNotice()V",
+                    "Lcom/nhnarts/ArtsEditTextLayout;->dispatchDraw(Landroid/graphics/Canvas;)V",
                     "Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;" -> true;
             default -> false;
         };

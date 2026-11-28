@@ -124,6 +124,14 @@ The SDK can retain still-valid old notices after a successful response, so routi
 
 **Risk:** early AirArmor user-ID registration happens before the startup runnable. If an absent UUID causes a failure, defer the real registration until authentication and preserve its result handling; do not suppress state 1 or unrelated protection checks. Automatic guest-transport entry after Discord also needs a verified engine-thread integration point.
 
+## Android edit-text clip without a soft keyboard (2026-11-28)
+
+- **Symptom (user/players, emulators incl. AVD):** in chat, typed text is not visible, but sending works.
+- **Cause [S, stock bug]:** `com.nhnarts.ArtsEditTextLayout` draws the Java `ArtsEditText` over the GL view and clips it in `dispatchDraw` with `mClip`. `getBaseClippingRect` subtracts the top inset from the bottom edge as well (default `(0,53,0,0)`, scaled by `width/320` below 640 px or `width/640*2` above that; on a 1290-px-wide AVD that is ~213 px). On a phone, the soft keyboard pushes the chat bar above that band. With a hardware keyboard (`show_ime_with_hard_keyboard=0`, which is typical for emulators), no IME appears and the bar stays at the screen bottom, inside the clipped band. Input still reaches the `EditText`.
+- **Change:** a same-width swap in `classes3.dex` `ArtsEditTextLayout.dispatchDraw`: `Canvas.clipPath(Path)` becomes `Raspberry.clipEditText(Canvas, Path)`. The helper does `clipRect` with the path's left/top/right bounds and an unbounded bottom. Registers, try/catch range and branches are unchanged. With a soft keyboard, the dropped band is under the keyboard, so phones look the same.
+- **Verify:** dexpatch selftest `editTextClip` (synthetic stock shape, single-instruction diff, same try rows). Real baseline `verify ok classes=8438 untouched=56282 edited=20`. On a device, open chat with a hardware keyboard and no soft keyboard, and confirm typed text appears in the field.
+- **Risk:** a field near the bottom may draw text slightly into the area below it instead of being clipped. The top header clip is kept.
+
 ## iOS session-reset compatibility (2026-11-21)
 
 The hash-locked `ipa patch` command now packages the iOS runtime; the loader-only probes below are historical. `internal/ipa/patch.go` owns guarded native edits and RX-slack resolvers for the eligible scene-ready guest entry, legacy login visibility, successful Logout and both Delete Avatar success paths, `checkSession` failure, and guest-generation refusal. Required runtime exports are checked before packaging; retained archive entries remain unchanged.

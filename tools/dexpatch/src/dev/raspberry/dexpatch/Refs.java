@@ -45,6 +45,10 @@ final class Refs {
             HELPER, "prepareNotice", List.of(), "V");
     static final MethodReference OPEN_NOTICE_CONNECTION = method(
             HELPER, "openNoticeConnection", List.of("Ljava/net/URL;"), "Ljava/net/URLConnection;");
+    static final MethodReference CLIP_EDIT_TEXT = method(
+            HELPER, "clipEditText", List.of("Landroid/graphics/Canvas;", "Landroid/graphics/Path;"), "Z");
+    static final MethodReference CANVAS_CLIP_PATH = method(
+            "Landroid/graphics/Canvas;", "clipPath", List.of("Landroid/graphics/Path;"), "Z");
     static final MethodReference URL_OPEN_CONNECTION = method(
             "Ljava/net/URL;", "openConnection", List.of(), "Ljava/net/URLConnection;");
     static final FieldReference OUTER = new ImmutableFieldReference(

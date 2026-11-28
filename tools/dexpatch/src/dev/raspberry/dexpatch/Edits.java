@@ -67,6 +67,8 @@ final class Edits {
                     prefixNoticeContext(method, impl);
             case "Ljp/naver/common/android/notice/notification/NotificationTask;->doInBackground([Ljava/lang/Void;)Ljp/naver/common/android/notice/model/NoticeCallbackResult;" ->
                     prefixNoticePrepare(impl);
+            case "Lcom/nhnarts/ArtsEditTextLayout;->dispatchDraw(Landroid/graphics/Canvas;)V" ->
+                    rewriteEditTextClip(impl);
             default -> null;
         };
     }
@@ -171,6 +173,35 @@ final class Edits {
         }
         if (found < 0) {
             throw new IllegalStateException("notice openConnection missing");
+        }
+        MutableMethodImplementation impl = new MutableMethodImplementation(orig);
+        impl.replaceInstruction(found, replacement);
+        return stripDebug(impl);
+    }
+
+    /** Swap the single Canvas.clipPath(Path) call for helper.clipEditText(Canvas, Path); same registers and width. */
+    static MethodImplementation rewriteEditTextClip(MethodImplementation orig) {
+        List<BuilderInstruction> insns = new ArrayList<>(new MutableMethodImplementation(orig).getInstructions());
+        int found = -1;
+        BuilderInstruction replacement = null;
+        for (int i = 0; i < insns.size(); i++) {
+            BuilderInstruction instruction = insns.get(i);
+            if (!(instruction instanceof ReferenceInstruction ri)
+                    || !Refs.refText(ri.getReference()).equals(Refs.refText(Refs.CANVAS_CLIP_PATH))) {
+                continue;
+            }
+            if (found >= 0 || instruction.getOpcode() != Opcode.INVOKE_VIRTUAL
+                    || !(instruction instanceof FiveRegisterInstruction five) || five.getRegisterCount() != 2) {
+                throw new IllegalStateException("edit clipPath shape");
+            }
+            replacement = Refs.invoke(Opcode.INVOKE_STATIC, Refs.CLIP_EDIT_TEXT, five.getRegisterC(), five.getRegisterD());
+            if (replacement.getCodeUnits() != instruction.getCodeUnits()) {
+                throw new IllegalStateException("edit clipPath width");
+            }
+            found = i;
+        }
+        if (found < 0) {
+            throw new IllegalStateException("edit clipPath missing");
         }
         MutableMethodImplementation impl = new MutableMethodImplementation(orig);
         impl.replaceInstruction(found, replacement);

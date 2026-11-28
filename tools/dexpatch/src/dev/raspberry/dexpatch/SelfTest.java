@@ -168,7 +168,51 @@ final class SelfTest {
         operandDrift(dir);
         editedTailIsNotASubstring(dir);
         noticeRouting(dir);
+        editTextClip(dir);
         System.out.println("selftest ok");
+    }
+
+    /** Mirrors stock ArtsEditTextLayout.dispatchDraw: clipPath inside an Exception try; only the call target changes. */
+    private static void editTextClip(File dir) throws Exception {
+        MutableMethodImplementation impl = new MutableMethodImplementation(3);
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_VIRTUAL,
+                Refs.method("Landroid/graphics/Canvas;", "save", List.of(), "I"), 2));
+        impl.addInstruction(Refs.iget(0, 1, new com.android.tools.smali.dexlib2.immutable.reference.ImmutableFieldReference(
+                "Lcom/nhnarts/ArtsEditTextLayout;", "mClip", "Landroid/graphics/Path;")));
+        impl.addInstruction(Refs.retVoid());
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_VIRTUAL, Refs.CANVAS_CLIP_PATH, 2, 0));
+        impl.addInstruction(Refs.invoke(Opcode.INVOKE_SUPER,
+                Refs.method("Landroid/widget/LinearLayout;", "dispatchDraw", List.of("Landroid/graphics/Canvas;"), "V"), 1, 2));
+        impl.addInstruction(Refs.retVoid());
+        impl.replaceInstruction(2, new BuilderInstruction21t(Opcode.IF_EQZ, 0, impl.newLabelForIndex(4)));
+        impl.addCatch("Ljava/lang/Exception;", impl.newLabelForIndex(3), impl.newLabelForIndex(4), impl.newLabelForIndex(4));
+        Method source = targetMethod("Lcom/nhnarts/ArtsEditTextLayout;", "dispatchDraw",
+                List.of(new ImmutableMethodParameter("Landroid/graphics/Canvas;", Set(), "canvas")),
+                "V", impl, AccessFlags.PROTECTED.getValue());
+        File input = new File(dir, "clip-source.dex");
+        File output = new File(dir, "clip-patched.dex");
+        write(input, List.of(source));
+        Method original = findKey(Main.load(input.getPath()), Semantic.key(source));
+        MethodImplementation edit = Edits.edit(original);
+        if (edit == null) {
+            fail("edit-text clip edit missing");
+        }
+        write(output, List.of(copy(original, edit)));
+        Method rewritten = findKey(Main.load(output.getPath()), Semantic.key(source));
+        Main.checkEdited(original, rewritten);
+        List<String> before = Semantic.rows(original.getImplementation());
+        List<String> after = Semantic.rows(rewritten.getImplementation());
+        if (!after.get(3).equals("INVOKE_STATIC ref=Ldev/raspberry/Raspberry;->clipEditText(Landroid/graphics/Canvas;Landroid/graphics/Path;)Z n=2:2,0,0,0,0")
+                || before.size() != after.size()
+                || !tryRows(after).equals(tryRows(before))
+                || !target(after.get(2)).equals(target(before.get(2)))) {
+            fail("edit-text clip semantics " + before + " / " + after);
+        }
+        for (int i = 0; i < before.size(); i++) {
+            if (i != 3 && !before.get(i).equals(after.get(i))) {
+                fail("edit-text clip drift at " + i + " " + after.get(i));
+            }
+        }
     }
 
     private static void noticeRouting(File dir) throws Exception {

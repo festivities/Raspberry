@@ -50,7 +50,7 @@ func TestAPKPlan(t *testing.T) {
 }
 
 func TestClasses3EditsCoverHelperCalls(t *testing.T) {
-	var gate, rewrite, noop, noticeOpen, noticeContext, noticePrepare int
+	var gate, rewrite, noop, noticeOpen, noticeContext, noticePrepare, editClip int
 	wantNotice := map[string]string{
 		"Ljp/naver/common/android/notice/commons/CustomSimpleHttpClient;->get(Ljava/lang/String;Ljava/util/List;)Ljava/io/InputStream;":                                "notice-open-connection",
 		"Ljp/naver/common/android/notice/notification/ImageDownloadTask;->downloadImage()[B":                                                                           "notice-open-connection",
@@ -72,6 +72,8 @@ func TestClasses3EditsCoverHelperCalls(t *testing.T) {
 			noticeContext++
 		case "notice-prepare":
 			noticePrepare++
+		case "edit-text-clip":
+			editClip++
 		}
 		if e.Class == "" || e.Name == "" || e.Proto == "" {
 			t.Fatalf("incomplete %+v", e)
@@ -84,7 +86,7 @@ func TestClasses3EditsCoverHelperCalls(t *testing.T) {
 			delete(wantNotice, key)
 		}
 	}
-	if gate != 1 || rewrite != 4 || noop != 7 || noticeOpen != 3 || noticeContext != 1 || noticePrepare != 1 || len(wantNotice) != 0 {
+	if gate != 1 || rewrite != 4 || noop != 7 || noticeOpen != 3 || noticeContext != 1 || noticePrepare != 1 || editClip != 1 || len(wantNotice) != 0 {
 		t.Fatalf("gate %d rewrite %d noop %d noticeOpen %d noticeContext %d noticePrepare %d missing %v",
 			gate, rewrite, noop, noticeOpen, noticeContext, noticePrepare, wantNotice)
 	}

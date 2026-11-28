@@ -214,6 +214,18 @@ public final class Raspberry {
         capture(context);
     }
 
+    /**
+     * Replaces the stock edit-text clipPath. Stock subtracts the top inset from the bottom too, so a
+     * field left at the screen bottom (no soft keyboard, e.g. emulator hardware keyboard) is clipped
+     * invisible. Keep the stock top/left/right edges; drop only the bottom edge. With a soft keyboard
+     * that band is under the keyboard anyway.
+     */
+    public static boolean clipEditText(android.graphics.Canvas canvas, android.graphics.Path clip) {
+        android.graphics.RectF b = new android.graphics.RectF();
+        clip.computeBounds(b, true);
+        return canvas.clipRect(b.left, b.top, b.right, 100000f);
+    }
+
     /** Opens a notice URL on the endpoint; target failures never fall back to LINE. */
     public static URLConnection openNoticeConnection(URL source) throws IOException {
         if (source == null) {

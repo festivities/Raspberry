@@ -1,5 +1,14 @@
 # Raspberry — Plan (PLAN.md)
 
+## 2026-11-28 — Android chat text invisible on emulators [S + host/package; AVD launch only]
+
+- **Report (user):** emulator players (and the user's own AVD) cannot see what they type in the chat box; sending works.
+- **Cause [S]:** stock `ArtsEditTextLayout.dispatchDraw` clips a bottom band (`getBaseClippingRect` also subtracts the top inset from the bottom). Without a soft keyboard (hardware keyboard, `show_ime_with_hard_keyboard=0`; AVD Raspberry has `hw.keyboard=yes` and the setting is `0`), the chat bar stays at the screen bottom inside that band. Details: docs/patches.md "Android edit-text clip without a soft keyboard".
+- **Fix (uncommitted working tree):** a same-width `classes3` swap, `Canvas.clipPath` → `Raspberry.clipEditText` (left/top/right kept, bottom unbounded). Files: `android/src/dev/raspberry/Raspberry.java`, `tools/dexpatch/.../{Edits,Refs,Main,SelfTest}.java`, `internal/patch/{dex,dex_test}.go`, `docs/patches.md`.
+- **Verified [V host/package]:** `scripts/gate.ps1`, `build-dexpatch.ps1` (selftest incl. `editTextClip`), `build-dex.ps1`, `android/host-test.ps1`, both native builds. Real baseline `verify ok classes=8438 untouched=56282 edited=20`. Deterministic signed pair `%TEMP%\opencode\raspberry\chatinput-20261128\chatclip-{a,b}\raspberry-lineplay-10.1.0.0.apk`: 66,801,622 B, SHA-256 `d2002eee6162a5adc9fb26f907efd6e5a8d5c96a2eca79d18aa5675326d46cc0`, distribution signer. Against `samsung-got2-b`, only `classes3.dex`, `classes5.dex` and `META-INF` signatures differ; both native libraries are identical. Built by private `build-chatclip.ps1`.
+- **Device:** installed in place on AVD Raspberry (`emulator-5559`). The app launches to the existing new-avatar intro. The chat fix itself is **not device-verified**: that AVD account has no avatar or chat yet. The user's AVD account has chat; test there.
+- **Note:** a pre-fix launch hit one ANR ("Input dispatching timed out") from a tap about 70 s after a cold boot at system load 10 (swiftshader + translation). It is not an app defect.
+
 ## HANDOFF INITIATED — 2026-11-27 (Android Samsung GOT startup fix)
 
 **Resume here.** Read `.agents/{AGENTS,PLAN,CONTRACT,HISTORY}.md` and [docs/patches.md "Vendor GOT bindings"](../docs/patches.md). Verify `git log -1`, `git status --short --branch` and `git ls-remote origin refs/heads/main`, then append **HANDOFF ACCEPTED**. The user requested a rebuild, commit/push and a zero-context handoff; read Git for the actual delivery outcome. The 2026-11-25 iOS allowlist handoff below was not formally accepted, but it is delivered (`8e7d7f0`) and its device test is still pending.
